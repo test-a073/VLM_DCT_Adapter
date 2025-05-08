@@ -1,0 +1,33 @@
+/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/peft/tuners/tuners_utils.py:550: UserWarning: Model with `tie_word_embeddings=True` and the tied_target_modules=['language_model.lm_head'] are part of the adapter. This can lead to complications, for example when merging the adapter or converting your model to formats other than safetensors. See for example https://github.com/huggingface/peft/issues/2018.
+  warnings.warn(
+Traceback (most recent call last):
+  File "/home/dulanga/data2/VLM_DCTAdapter/main_GQA.py", line 234, in <module>
+    trainer = SFTTrainer(
+              ^^^^^^^^^^^
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/trl/trainer/sft_trainer.py", line 358, in __init__
+    super().__init__(
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/transformers/trainer.py", line 614, in __init__
+    self._move_model_to_device(model, args.device)
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/transformers/trainer.py", line 901, in _move_model_to_device
+    model = model.to(device)
+            ^^^^^^^^^^^^^^^^
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1340, in to
+    return self._apply(convert)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/torch/nn/modules/module.py", line 900, in _apply
+    module._apply(fn)
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/torch/nn/modules/module.py", line 900, in _apply
+    module._apply(fn)
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/torch/nn/modules/module.py", line 900, in _apply
+    module._apply(fn)
+  [Previous line repeated 5 more times]
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/torch/nn/modules/module.py", line 927, in _apply
+    param_applied = fn(param)
+                    ^^^^^^^^^
+  File "/home/dulanga/anaconda3/envs/dct/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1326, in convert
+    return t.to(
+           ^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 224.00 MiB. GPU 0 has a total capacity of 44.40 GiB of which 130.19 MiB is free. Process 1648774 has 1.78 GiB memory in use. Process 1813567 has 746.00 MiB memory in use. Process 1617305 has 4.45 GiB memory in use. Including non-PyTorch memory, this process has 37.29 GiB memory in use. Of the allocated memory 36.81 GiB is allocated by PyTorch, and 71.45 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

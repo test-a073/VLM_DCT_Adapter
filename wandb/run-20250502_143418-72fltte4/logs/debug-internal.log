@@ -1,0 +1,15 @@
+{"time":"2025-05-02T14:34:18.544485157+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/dulanga/data2/VLM_DCTAdapter/wandb/run-20250502_143418-72fltte4/logs/debug-core.log"}
+{"time":"2025-05-02T14:34:19.013877992+08:00","level":"INFO","msg":"created new stream","id":"72fltte4"}
+{"time":"2025-05-02T14:34:19.013927492+08:00","level":"INFO","msg":"stream: started","id":"72fltte4"}
+{"time":"2025-05-02T14:34:19.014067874+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"72fltte4"}
+{"time":"2025-05-02T14:34:19.014123504+08:00","level":"INFO","msg":"handler: started","stream_id":"72fltte4"}
+{"time":"2025-05-02T14:34:19.014059913+08:00","level":"INFO","msg":"sender: started","stream_id":"72fltte4"}
+{"time":"2025-05-02T14:34:19.39603752+08:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-05-02T14:34:31.481041913+08:00","level":"INFO","msg":"stream: closing","id":"72fltte4"}
+{"time":"2025-05-02T14:34:31.481075143+08:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-05-02T14:34:31.481133574+08:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-05-02T14:34:33.054449383+08:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-05-02T14:34:33.339358876+08:00","level":"INFO","msg":"handler: closed","stream_id":"72fltte4"}
+{"time":"2025-05-02T14:34:33.339426166+08:00","level":"INFO","msg":"writer: Close: closed","stream_id":"72fltte4"}
+{"time":"2025-05-02T14:34:33.339432676+08:00","level":"INFO","msg":"sender: closed","stream_id":"72fltte4"}
+{"time":"2025-05-02T14:34:33.339548087+08:00","level":"INFO","msg":"stream: closed","id":"72fltte4"}

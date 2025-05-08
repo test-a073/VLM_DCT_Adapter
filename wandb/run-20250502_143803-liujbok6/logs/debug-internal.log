@@ -1,0 +1,15 @@
+{"time":"2025-05-02T14:38:03.115527662+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/dulanga/data2/VLM_DCTAdapter/wandb/run-20250502_143803-liujbok6/logs/debug-core.log"}
+{"time":"2025-05-02T14:38:03.691805318+08:00","level":"INFO","msg":"created new stream","id":"liujbok6"}
+{"time":"2025-05-02T14:38:03.691880248+08:00","level":"INFO","msg":"stream: started","id":"liujbok6"}
+{"time":"2025-05-02T14:38:03.691943479+08:00","level":"INFO","msg":"handler: started","stream_id":"liujbok6"}
+{"time":"2025-05-02T14:38:03.691921549+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"liujbok6"}
+{"time":"2025-05-02T14:38:03.692049679+08:00","level":"INFO","msg":"sender: started","stream_id":"liujbok6"}
+{"time":"2025-05-02T14:38:04.077758398+08:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-05-02T14:38:23.548182407+08:00","level":"INFO","msg":"stream: closing","id":"liujbok6"}
+{"time":"2025-05-02T14:38:23.548257278+08:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-05-02T14:38:23.548385629+08:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-05-02T14:38:25.092387669+08:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-05-02T14:38:25.415591342+08:00","level":"INFO","msg":"handler: closed","stream_id":"liujbok6"}
+{"time":"2025-05-02T14:38:25.415670893+08:00","level":"INFO","msg":"writer: Close: closed","stream_id":"liujbok6"}
+{"time":"2025-05-02T14:38:25.415695273+08:00","level":"INFO","msg":"sender: closed","stream_id":"liujbok6"}
+{"time":"2025-05-02T14:38:25.415879415+08:00","level":"INFO","msg":"stream: closed","id":"liujbok6"}
