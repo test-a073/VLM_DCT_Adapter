@@ -9,7 +9,7 @@ class DCTAdapter(nn.Module):
     def __init__(self, input_dim=768, num_components=24, tau=1.0):
         super().__init__()
         self.tau = tau
-   
+        self.adapter_gate_logits = nn.Parameter(torch.randn(input_dim))  # One per DCT dim
         self.adapter_down = nn.Linear(input_dim, 18, bias=False) # 18 best
         self.adapter_up = nn.Linear(18, input_dim, bias=False) # 18 best
 
@@ -39,16 +39,13 @@ class DCTAdapter(nn.Module):
     def forward(self, hidden_states):
         dct = self.dct1(hidden_states)  # [B, T, C]
 
-
+        # gate_mask = self.gumbel_softmax_mask(self.adapter_gate_logits)  # [C]
         # gated_dct = dct * gate_mask  # broadcasted over B and T
 
         z = dct.reshape(-1, dct.shape[-1])  # [B*T, C]
-        z_pert = self.adapter_up(F.silu(self.adapter_down(z)))
+        z_pert = self.adapter_up(F.tanh(self.adapter_down(z)))
         out = z_pert.view_as(dct)
         idct = self.idct1(out)
         return hidden_states + idct  # residual connection
 
 
-# max pool -> low dimension 
-# dconv layer -> up sample
-# reduce r in lora so that the params equal to our number of params

@@ -1,6 +1,7 @@
 import yaml
 import torch
-from adapter.my_adapter import DCTAdapter #FrequencyGatedDCTAdapter
+# from adapter.my_adapter import DCTAdapter #FrequencyGatedDCTAdapter
+from adapter.my_adapter import DCTAdapter
 from models.vlm_loader import load_vlm
 from dataset.dataset_loader import load_dataset_vlm
 from runner.evaluate import evaluate_model
@@ -42,28 +43,28 @@ def main():
             freeze_model_except_adapters(model)
         if config.get("adapter", {}).get("do_peft", False):
             print('Do PEFT.....')
-            # peft_config = LoraConfig(
-            #     lora_alpha=16,
-            #     lora_dropout=0.05,
-            #     r=8,
-            #     bias="none",
-            #     target_modules=["q_proj", "v_proj"],
-            #     task_type="CAUSAL_LM",
-            # )
+            peft_config = LoraConfig(
+                lora_alpha=16,
+                lora_dropout=0.05,
+                r=3,
+                bias="none",
+                target_modules=["q_proj", "v_proj"],
+                task_type="CAUSAL_LM",
+            )
             # peft_config = IA3Config(
             #     task_type="CAUSAL_LM", 
             #     target_modules=["k_proj", "v_proj", "down_proj"], 
             #     feedforward_modules=["down_proj"]
             # )
             
-            peft_config= LoHaConfig(
-                r=16,
-                alpha=16,
-                target_modules=["q_proj", "v_proj"],
-                module_dropout=0.1,
-                modules_to_save=["classifier"],
-                task_type="CAUSAL_LM"
-            )
+            # peft_config= LoHaConfig(
+            #     r=16,
+            #     alpha=16,
+            #     target_modules=["q_proj", "v_proj"],
+            #     module_dropout=0.1,
+            #     modules_to_save=["classifier"],
+            #     task_type="CAUSAL_LM"
+            # )
 
             # peft_config = AdaLoraConfig(
             #     r=8,

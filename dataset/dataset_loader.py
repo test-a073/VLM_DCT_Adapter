@@ -205,22 +205,96 @@ class ChartQAFlorenceDataset(Dataset):
         image = example['image'].convert("RGB")
         return question, first_answer, image
 
+class GQADataset(Dataset):
+    def __init__(self, data, images_data):
+        self.data = data
+        self.images_data = images_data
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        example = self.data[idx]
+        question = "<GQA>" + example["question"]
+        
+        first_answer = example["answer"][0]
+
+        image_id = example['imageId']
+        image_id_index = self.images_data['id'].index(image_id)
+        image = self.images_data[image_id_index]['image']
+        image = image.convert("RGB")
+        return question, first_answer, image 
+
+class DocVQADataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+        
+    def __len__(self):
+        return len(self.data)
+        
+    def __getitem__(self, idx):
+        example = self.data[idx]
+        question = "<DocVQA>" + example['question']
+        first_answer = example['answers'][0]
+        image = example['image'].convert("RGB")
+        return question, first_answer, image
+
 def load_dataset_vlm(dataset_name):
-    if dataset_name == "gqa":
+    if dataset_name == "docvqa":
+        dataset_id = "HuggingFaceM4/DocumentVQA"
+        data = load_dataset(dataset_id)
+
+        if config['models'][0]['name'] == 'qwen':
+            # TODO: SHOULD UPDATE THE FOLLOWING WITH A NEW COLLATE FUNCTION
+            dataset = None
+        
+        elif config['models'][0]['name'] in  ('florence', 'florence-large'):
+            BATCH_SIZE = config['train']['batch_size']
+            NUM_WORKERS = config['train']['num_workers']
+            print("Dataset ", config['models'][0]['name'], "loaded..")
+            train_dataset = DocVQADataset(train_balanced_instructions_ds, train_balanced_images_ds)
+            val_dataset = DocVQADataset(val_balanced_instructions_ds, val_balanced_images_ds)
+
+            train_loader = torch.utils.data.DataLoader(
+                train_dataset, batch_size=config['train']['batch_size'], shuffle=True, collate_fn=collate_fn_florence)
+            val_loader = torch.utils.data.DataLoader(
+                val_dataset, batch_size=config['train']['batch_size'], shuffle=False, collate_fn=collate_fn_florence)
+            dataset = {"train": train_loader,"val":val_loader,}
+
+    elif dataset_name == "gqa":
+        print("Dataset I am using right now ", dataset_name)
+        dataset_id = "lmms-lab/GQA"
         N_DATA_SAMPLES = 50
         if N_DATA_SAMPLES is not None:
-            val_balanced_instructions_ds = load_dataset("lmms-lab/GQA","val_balanced_instructions", cache_dir=DATA_CACHE_DIR,split="val").select(range(N_DATA_SAMPLES))
-            train_balanced_instructions_ds = load_dataset("lmms-lab/GQA","train_balanced_instructions",cache_dir=DATA_CACHE_DIR,split="train").select(range(N_DATA_SAMPLES))
+            val_balanced_instructions_ds = load_dataset(dataset_id,"val_balanced_instructions",split="val").select(range(N_DATA_SAMPLES))
+            train_balanced_instructions_ds = load_dataset(dataset_id,"train_balanced_instructions",split="train").select(range(N_DATA_SAMPLES))
         elif N_DATA_SAMPLES is None:
-            val_balanced_instructions_ds = load_dataset("lmms-lab/GQA","val_balanced_instructions", cache_dir=DATA_CACHE_DIR,split="val")
-            train_balanced_instructions_ds = load_dataset("lmms-lab/GQA","train_balanced_instructions",cache_dir=DATA_CACHE_DIR,split="train")
+            val_balanced_instructions_ds = load_dataset(dataset_id,"val_balanced_instructions",split="val")
+            train_balanced_instructions_ds = load_dataset(dataset_id,"train_balanced_instructions",split="train")
 
-        train_balanced_images_ds = load_dataset("lmms-lab/GQA","train_balanced_images", cache_dir=DATA_CACHE_DIR, split="train")
-        val_balanced_images_ds = load_dataset("lmms-lab/GQA","val_balanced_images", cache_dir=DATA_CACHE_DIR, split="val")
-        train_dataset = [format_gqa_data(sample, train_balanced_images_ds) for sample in train_balanced_instructions_ds]
-        val_dataset = [format_gqa_data(sample, val_balanced_images_ds) for sample in val_balanced_instructions_ds]
-        dataset = {"train": train_dataset,"val":val_dataset}
-        return dataset
+        train_balanced_images_ds = load_dataset(dataset_id,"train_balanced_images", split="train")
+        val_balanced_images_ds = load_dataset(dataset_id,"val_balanced_images", split="val")
+
+        if config['models'][0]['name'] == 'qwen':
+            train_dataset = [format_gqa_data(sample, train_balanced_images_ds) for sample in train_balanced_instructions_ds]
+            val_dataset = [format_gqa_data(sample, val_balanced_images_ds) for sample in val_balanced_instructions_ds]
+            dataset = {"train": train_dataset,"val":val_dataset}
+        
+        elif config['models'][0]['name'] in  ('florence', 'florence-large'):
+            BATCH_SIZE = config['train']['batch_size']
+            NUM_WORKERS = config['train']['num_workers']
+            print("Dataset ", config['models'][0]['name'], "loaded..")
+            train_dataset = GQADataset(train_balanced_instructions_ds, train_balanced_images_ds)
+            val_dataset = GQADataset(val_balanced_instructions_ds, val_balanced_images_ds)
+
+            train_loader = torch.utils.data.DataLoader(
+                train_dataset, batch_size=config['train']['batch_size'], shuffle=True, collate_fn=collate_fn_florence)
+            val_loader = torch.utils.data.DataLoader(
+                val_dataset, batch_size=config['train']['batch_size'], shuffle=False, collate_fn=collate_fn_florence)
+            dataset = {"train": train_loader,"val":val_loader}
+
+        return dataset, processor
+
     elif dataset_name=="chart_qa":
         dataset_id = "HuggingFaceM4/ChartQA"
         train_dataset, eval_dataset, test_dataset = load_dataset(dataset_id, split=['train[:10%]', 'val[:10%]', 'test[:10%]'])

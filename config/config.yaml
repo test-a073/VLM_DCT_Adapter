@@ -1,14 +1,16 @@
 models:
   - name: florence-large
+  # - name: None
 
 datasets:
-  - name: chart_qa
+  # - name: chart_qa
+  - name: gqa
   # - name: ok_vqa
   # - name: coco_captions
 
 adapter:
-  do_adapt: true
-  do_peft: false
+  do_adapt: false
+  do_peft: true
   name: MyCustomAdapter
   params:
     # input_dim: 768 # this for florence base
@@ -45,3 +47,4 @@ train:
   epochs: 100
   batch_size: 1
   lr: 0.0001
+  num_workers: 0
