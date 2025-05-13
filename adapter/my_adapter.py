@@ -13,10 +13,6 @@ class DCTAdapter(nn.Module):
         self.adapter_down = nn.Linear(input_dim, 18, bias=False) # 18 best
         self.adapter_up = nn.Linear(18, input_dim, bias=False) # 18 best
 
-    def gumbel_softmax_mask(self, logits):
-        gumbel_noise = -torch.empty_like(logits).exponential_().log()
-        y = logits + gumbel_noise
-        return F.softmax(y / self.tau, dim=-1)  # soft but approximates hard gate
 
     def dct1(self, x):  # same as before
         N = x.size(-1)
@@ -37,13 +33,14 @@ class DCTAdapter(nn.Module):
         return dct
 
     def forward(self, hidden_states):
+        print("This is the hidden states shape:", hidden_states.shape)
         dct = self.dct1(hidden_states)  # [B, T, C]
 
 
         # gated_dct = dct * gate_mask  # broadcasted over B and T
 
         z = dct.reshape(-1, dct.shape[-1])  # [B*T, C]
-        z_pert = self.adapter_up(F.silu(self.adapter_down(z)))
+        # z_pert = self.adapter_up(F.leaky_relu(self.adapter_down(z)))
         out = z_pert.view_as(dct)
         idct = self.idct1(out)
         return hidden_states + idct  # residual connection

@@ -8,9 +8,11 @@ datasets:
   # - name: ok_vqa
   # - name: coco_captions
 
+task_prompt: <GQA>
+  
 adapter:
-  do_adapt: false
-  do_peft: true
+  do_adapt: true
+  do_peft: false
   name: MyCustomAdapter
   params:
     # input_dim: 768 # this for florence base

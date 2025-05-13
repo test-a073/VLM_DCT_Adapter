@@ -106,6 +106,8 @@ def main():
 
             print(f"Evaluating on {dataset_cfg['name']}...")
             acc = evaluate_model(model,config, dataset,processor)
+            print("accuracy ", acc)
+            print("ALLL_DONE!!!!")
             print(f"Model: {model_cfg['name']}, Dataset: {dataset_cfg['name']}, Accuracy: {acc:.4f}")
 
 if __name__ == "__main__":

@@ -77,7 +77,7 @@ def evaluate_model_florence(model, config, dataset, processor, preprocess_fn=Non
     val_loss = 0
     predicted_answers = []
     ground_truth_answers = []
-    task_prompt = "<DocVQA>" 
+    task_prompt = config["task_prompt"] 
 
     loader = dataset['val']
     model.eval()
@@ -136,8 +136,10 @@ def evaluate_model_florence(model, config, dataset, processor, preprocess_fn=Non
         )
 
         # Print metrics 
-        print(f"Autoencoder Validation Loss: {avg_val_loss}")
+        print(f" Validation Loss: {avg_val_loss}")
         print(f"Levenshtein Similarity: {levenshtein_similarity:.4f}")
+
+        
 def evaluate_model_qwen(model, dataset, processor, preprocess_fn=None, batch_size=8, device="cuda"):
 
 
