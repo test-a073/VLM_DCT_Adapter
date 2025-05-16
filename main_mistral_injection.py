@@ -16,6 +16,10 @@ from tqdm import tqdm
 from evaluator.generic_evaluator import GenericLLMEvaluator
 # from evaluator.cascade_evaluator import CascadeEvaluator # If needed
 
+# Import for Adapter
+from adapter.my_adapter import DCTAdapter # Assuming DCTAdapter is in adapter/my_adapter.py
+from runner.train import train_model, freeze_model_except_adapters
+
 try:
     from mmengine.config import ConfigDict
 except ImportError:
@@ -32,6 +36,69 @@ except ImportError:
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# --- Adapter Helper Functions (from main_chartQA.py) ---
+def get_parent_module(model: torch.nn.Module, name: str) -> torch.nn.Module:
+    names = name.split('.')
+    parent = model
+    for n in names[:-1]:
+        parent = getattr(parent, n)
+    return parent
+
+def inject_adapters(
+    model: torch.nn.Module,
+    adapter_cls: type,
+    adapter_args: dict,
+    layers_config: List[Dict[str, str]] # Expected format: [{'name': 'layer_name_pattern_to_match'}]
+) -> torch.nn.Module:
+    logger.info(f"Starting adapter injection with {adapter_cls.__name__}...")
+    for name, module in model.named_modules():
+        for layer_conf in layers_config:
+            # Using 'in' for pattern matching, can be made more specific if needed (e.g. regex)
+            if layer_conf['name'] in name:
+                logger.info(f"Injecting adapter into: {name}")
+                try:
+                    parent = get_parent_module(model, name)
+                    original_module = getattr(parent, name.split('.')[-1])
+                    # Ensure the original module is passed to Sequential if it's being wrapped
+                    # The adapter_cls might replace or wrap. If it wraps, it needs the original module.
+                    # For a simple sequential addition:
+                    adapter_instance = adapter_cls(**adapter_args)
+                    setattr(parent, name.split('.')[-1], torch.nn.Sequential(original_module, adapter_instance))
+                    logger.info(f"Successfully injected adapter after {name}")
+                except Exception as e:
+                    logger.error(f"Failed to inject adapter into {name}: {e}", exc_info=True)
+    return model
+
+# --- Placeholder for functions from runner.train (implement or import them) ---
+def freeze_model_except_adapters(model: torch.nn.Module, adapter_name_pattern: str = "dct_adapter") -> None:
+    """Placeholder: Freezes all parameters except those containing adapter_name_pattern."""
+    logger.warning(f"Placeholder: `freeze_model_except_adapters` called. Implement freezing logic.")
+    # Example (needs refinement based on actual adapter naming):
+    # for name, param in model.named_parameters():
+    #     if adapter_name_pattern not in name:
+    #         param.requires_grad = False
+    #     else:
+    #         param.requires_grad = True
+    #         logger.info(f"Adapter parameter {name} remains trainable.")
+    pass
+
+def train_model_with_adapter(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    train_dataset: Dataset,
+    args: argparse.Namespace # For training specific args like epochs, lr
+) -> torch.nn.Module:
+    """Placeholder: Trains the model with the injected adapter."""
+    logger.warning(f"Placeholder: `train_model_with_adapter` called with {len(train_dataset)} samples. Implement training logic.")
+    # Example training loop structure:
+    # optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.adapter_lr)
+    # model.train()
+    # for epoch in range(args.adapter_epochs):
+    #     for batch in train_dataset: # This needs a DataLoader for batching
+    #         # Process batch, forward pass, loss, backward pass, optimizer step
+    #         pass
+    return model
 
 # --- Helper Functions (adapted from evaluation.py) ---
 
@@ -265,7 +332,7 @@ def run_evaluation_pipeline(
             f.write(f"Dataset: {args.dataset_path}\n")
             f.write(f"Evaluator: {args.evaluator_type}\n")
             f.write(f"Judge Model: {args.judge_model_name}\n")
-            f.write(f"Evaluation Split Size: {args.num_eval_samples}\n")
+            f.write(f"Evaluation Split Size: {len(eval_dataset) if eval_dataset is not None else 'N/A'}\n")
             f.write(f"Final Score: {final_score_value}\n")
         logger.info(f"Evaluation score for {output_suffix} saved to {score_file_path}")
     except Exception as e:
@@ -285,11 +352,25 @@ def main():
     parser.add_argument("--num_eval_samples", type=int, default=2, help="Number of samples for evaluation.")
     parser.add_argument("--max_new_tokens", type=int, default=512, help="Max new tokens for generation.")
     parser.add_argument("--eval_output_dir", type=str, default="./eval_results_injection", help="Directory for all outputs.")
-    parser.add_argument("--openai_config_path", type=str, default="evaluator/openai_config.yaml", help="Path to OpenAI config.") # Adjusted path
+    parser.add_argument("--openai_config_path", type=str, default="evaluator/openai_config.yaml", help="Path to OpenAI config.")
     parser.add_argument("--evaluator_type", type=str, default="GenericLLMEvaluator", choices=["GenericLLMEvaluator"], help="Evaluator type.")
     parser.add_argument("--judge_model_name", type=str, default="gpt-4", help="Judge model name.")
     parser.add_argument("--judge_system_prompt", type=str, default=None, help="System prompt for the judge.")
-    # Add other arguments from evaluation.py if needed, e.g., for specific model/evaluator configs
+
+    # Arguments for Adapter Injection
+    parser.add_argument("--do_adapter_injection", action='store_true', help="Enable adapter injection.")
+    parser.add_argument("--adapter_layers_json", type=str, default="""[{"name": "model.layers.15.mlp.gate_proj"}, {"name": "model.layers.15.mlp.up_proj"}]""",
+                        help="""JSON string of layer configurations. Each dict must have a "name" key specifying the layer name/pattern. E.g., '[{"name": "block.1"}, {"name": "mlp"}]'.""")
+    parser.add_argument(
+        "--adapter_params_json",
+        type=str,
+        default='{"in_features": 4096, "reduction_factor": 16}',
+        help="""JSON string of parameters for DCTAdapter. E.g., {"in_features": 4096, "reduction_factor": 16}. This depends on your DCTAdapter's __init__ method."""
+    )
+    parser.add_argument("--perform_adapter_training", action='store_true', help="Enable training after adapter injection.")
+    parser.add_argument("--adapter_lr", type=float, default=1e-4, help="Learning rate for adapter training.")
+    parser.add_argument("--adapter_epochs", type=int, default=1, help="Number of epochs for adapter training.")
+
     args = parser.parse_args()
 
     os.makedirs(args.eval_output_dir, exist_ok=True)
@@ -355,55 +436,122 @@ def main():
 
     # --- Adapter Injection and Evaluation for Adapted Model ---
     logger.info(f"--- Starting Evaluation for Adapted Model: {args.model_name_or_path} + Adapter ---")
-    adapted_model = None # Initialize
+    adapted_model = None 
+    model_for_adapted_eval_name = args.model_name_or_path 
+    # Default to base model name
     try:
-        # **TODO: User specific adapter injection and model loading/modification logic here **
-        # This is a placeholder. You need to implement how the adapter is loaded and applied.
-        # The 'train_dataset' (first 50 samples) is available as `train_dataset`
-        # You might reload the base model and then apply the adapter, or load a checkpoint.
-        
-        logger.info(f"Placeholder for loading base model ({args.model_name_or_path}) and injecting adapter...")
-        # Example: adapted_model = load_mistral_with_my_adapter(args.model_name_or_path, adapter_path="path/to/your/adapter", training_data=train_dataset)
-        # For now, we'll re-load the original model as a stand-in for the adapted model.
-        # Replace this with your actual adapted model loading.
-        
-        # SIMULATING ADAPTED MODEL LOADING (replace with actual logic)
-        # If your adaptation process modifies the model in-place and you want to simulate this,
-        # ensure the model is correctly prepared.
-        # For a clean test, it's often better to load the base model anew then apply adaptation.
-        
-        logger.warning("USING ORIGINAL MODEL AS A PLACEHOLDER FOR ADAPTED MODEL. REPLACE THIS WITH YOUR ADAPTER INJECTION LOGIC.")
-        adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path) # Placeholder
-        
-        # >>> START OF USER'S ADAPTER INJECTION AND TRAINING CODE <<<
-        # Example:
-        # my_adapter = load_my_adapter_from_checkpoint("path/to/adapter_checkpoint.pt")
-        # adapted_model = inject_adapter_into_model(adapted_model, my_adapter)
-        # logger.info("Adapter injected.")
-        # if args.perform_adaptation_training:
-        #   logger.info(f"Performing adaptation training using {len(train_dataset)} samples...")
-        #   adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset)
-        #   logger.info("Adaptation training complete.")
-        # >>> END OF USER'S ADAPTER INJECTION AND TRAINING CODE <<<
+        if args.do_adapter_injection:
+            logger.info(f"Loading base model ({args.model_name_or_path}) for adapter injection...")
+            adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+            model_for_adapted_eval_name = f"{args.model_name_or_path}_adapted"
 
-        if adapted_model: # Proceed only if adapted_model is loaded
+            # TODO: write the model architecture ... and then determine which layers to adapt...
+            # 1. Write model architecture to file
+            model_arch_path = os.path.join(args.eval_output_dir, "model_archi.txt")
+            try:
+                with open(model_arch_path, 'w') as f:
+                    f.write(str(adapted_model))
+                logger.info(f"Model architecture written to {model_arch_path}")
+            except Exception as e:
+                logger.error(f"Failed to write model architecture: {e}")
+
+            # 2. Determine last layer and dynamically set adapter_layers_config
+            # This will override args.adapter_layers_json for this specific logic
+            try:
+                num_hidden_layers = adapted_model.config.num_hidden_layers
+                if num_hidden_layers is None or num_hidden_layers == 0:
+                    logger.warning("Could not determine num_hidden_layers from model.config. Falling back to parsing adapter_layers_json arg.")
+                    # Fallback to user-provided JSON if num_hidden_layers is not found
+                    adapter_layers_config = json.loads(args.adapter_layers_json)
+                    if not isinstance(adapter_layers_config, list) or not all(isinstance(item, dict) and 'name' in item for item in adapter_layers_config):
+                        raise ValueError("adapter_layers_json must be a list of dicts, each with a 'name' key when falling back.")
+                else:
+                    last_layer_idx = num_hidden_layers - 1
+                    # Target specific MLP components in the last layer
+                    adapter_layers_config = [
+                        {"name": f"model.layers.{last_layer_idx}.mlp.gate_proj"},
+                        {"name": f"model.layers.{last_layer_idx}.mlp.up_proj"}
+                        # You could also add other typical targets like:
+                        # {"name": f"model.layers.{last_layer_idx}.mlp.down_proj"},
+                        # {"name": f"model.layers.{last_layer_idx}.self_attn.q_proj"},
+                        # {"name": f"model.layers.{last_layer_idx}.self_attn.k_proj"},
+                        # {"name": f"model.layers.{last_layer_idx}.self_attn.v_proj"},
+                        # {"name": f"model.layers.{last_layer_idx}.self_attn.o_proj"}
+                    ]
+                    logger.info(f"Dynamically configured to inject adapters into MLP of the last layer (Layer {last_layer_idx}): {adapter_layers_config}")
+                    logger.warning(f"This dynamic configuration for last layer MLP overrides the --adapter_layers_json argument.")
+
+            except json.JSONDecodeError as e: # Only relevant for fallback
+                logger.error(f"Invalid JSON for adapter_layers_json (during fallback): {e}")
+                raise
+            except AttributeError as e: # If model.config.num_hidden_layers doesn't exist
+                logger.error(f"Could not automatically determine number of layers from model.config: {e}. Please provide --adapter_layers_json or ensure model config has num_hidden_layers.")
+                # As a hard fallback, attempt to use the provided JSON or error out if it's bad
+                try:
+                    adapter_layers_config = json.loads(args.adapter_layers_json)
+                    if not isinstance(adapter_layers_config, list) or not all(isinstance(item, dict) and 'name' in item for item in adapter_layers_config):
+                         raise ValueError("adapter_layers_json must be a list of dicts, each with a 'name' key when falling back.")
+                    logger.warning("Falling back to --adapter_layers_json due to failure in dynamic layer determination.")
+                except json.JSONDecodeError as je:
+                     logger.error(f"Invalid JSON for adapter_layers_json (during hard fallback): {je}")
+                     raise # Critical error if we can't determine layers
+            except ValueError as e: # For specific value errors raised
+                logger.error(e)
+                raise
+
+            # Continue with adapter_params parsing as before
+            try:
+                adapter_params = json.loads(args.adapter_params_json)
+                if not isinstance(adapter_params, dict):
+                    raise ValueError("adapter_params_json must be a valid JSON object (dictionary).")
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON for adapter_params_json: {e}")
+                raise
+            except ValueError as e:
+                logger.error(e)
+                raise
+
+            logger.info(f"Injecting adapter into layers: {adapter_layers_config} with params: {adapter_params}")
+            adapted_model = inject_adapters(adapted_model, DCTAdapter, adapter_params, adapter_layers_config)
+            logger.info("Adapter injection process finished.")
+
+            freeze_model_except_adapters(adapted_model) # Placeholder call
+
+            if args.perform_adapter_training:
+                if train_dataset is None or len(train_dataset) == 0:
+                    logger.warning("Adapter training requested, but train_dataset is empty or None. Skipping training.")
+                else:
+                    logger.info(f"Performing adapter training using {len(train_dataset)} samples...")
+                    # Ensure model is on the correct device for training
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    adapted_model.to(device)
+                    adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset, args) # Placeholder call
+                    logger.info("Adapter training finished.")
+            else:
+                logger.info("Adapter training not requested (perform_adapter_training=False).")
+        else:
+            logger.info("Adapter injection not requested (do_adapter_injection=False). Evaluating base model as 'adapted' model.")
+            adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+            model_for_adapted_eval_name = f"{args.model_name_or_path}_base_as_adapted" 
+
+        if adapted_model: 
             run_evaluation_pipeline(
-                model_name_or_path=args.model_name_or_path, # Base model name for reporting
+                model_name_or_path=model_for_adapted_eval_name, 
                 model_to_evaluate=adapted_model,
                 tokenizer=tokenizer,
                 eval_dataset=eval_dataset,
                 args=args,
-                output_suffix="adapted"
+                output_suffix="adapted" 
             )
         else:
-            logger.error("Adapted model was not loaded. Skipping evaluation for adapted model.")
+            logger.error("Adapted model was not loaded or created. Skipping evaluation for adapted model.")
 
-        del adapted_model # Free memory
+        del adapted_model 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     except Exception as e:
-        logger.error(f"Error during adapted model evaluation: {e}", exc_info=True)
+        logger.error(f"Error during adapted model setup or evaluation: {e}", exc_info=True)
 
     logger.info("--- Main Mistral Injection Script Finished ---")
 
