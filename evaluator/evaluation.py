@@ -203,7 +203,7 @@ def main():
 
     # 1. Load dataset
     args.dataset_path = "benchmark_datasets/mtbench101.jsonl"
-    n = 5  # Number of lines to load for testing
+    n = 100  # Number of lines to load for testing
     logger.info(f"Loading dataset from {args.dataset_path} (first {n} lines)...")
     try:
         raw_dataset_list = []
