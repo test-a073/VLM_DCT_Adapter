@@ -13,6 +13,7 @@ import json
 import os
 import yaml
 import logging # Added for logging setup
+import re # Add this import
 from typing import Dict, Any # Added Dict, Any
 
 import torch
@@ -106,27 +107,82 @@ def load_openai_config(config_path):
 # Define a simple text postprocessor for the judge's output for TextSummarizer-like behavior
 # This would be passed as `dict_postprocessor` to GenericLLMEvaluator
 def simple_text_summarizer_postprocessor(judge_response_text: str) -> Dict[str, Any]:
-    """Basic postprocessor to try and extract a score if judge response is simple."""
+    """Postprocessor to extract a score from judge response text using regex."""
     score = None
-    # Attempt to find a line like "Score: 7" or just a number 1-10
     lines = judge_response_text.strip().split('\n')
-    for line in reversed(lines): # Check last lines first for the score
-        line_lower = line.lower()
-        if "score:" in line_lower:
+
+    # Pattern 1: Look for "Score: X", "Score: X/Y", or Chinese variants. Captures X.
+    # Example: "Score: 4/10" -> captures "4"; "Score: 8.5" -> captures "8.5"
+    score_keyword_pattern = r"(?:score|评[分价测]|得分)[:：]?\s*(\d+(?:\.\d+)?)(?:/\d+)?"
+
+    # Pattern 2: Look for a standalone number, often at the end of a line/response.
+    # This is a fallback and is more restrictive to avoid grabbing random numbers.
+    # It checks if the number is likely a score (e.g., within 0-10 range if it's not explicitly labeled with 'Score:').
+    # Looks for a number possibly at the end of a string, or on its own line.
+    # Positive lookbehind for start of string or non-alphanumeric/non-dot/non-underscore, to avoid matching parts of words/numbers.
+    # Positive lookahead for end of string or non-alphanumeric/non-dot/non-underscore.
+    standalone_score_pattern = r"(?<![a-zA-Z0-9\._-])(\b\d+(?:\.\d+)?\b)(?![a-zA-Z0-9\._-])"
+
+    for line in reversed(lines): # Check from last lines first
+        line_cleaned = line.strip()
+        if not line_cleaned: # Skip empty lines
+            continue
+
+        # Try Pattern 1: "Score: X" or "Score: X/Y"
+        match = re.search(score_keyword_pattern, line_cleaned, re.IGNORECASE)
+        if match:
+            score_str = match.group(1) # The first capture group has the score value
+            if score_str:
+                try:
+                    score = float(score_str)
+                    break # Score found and successfully parsed
+                except ValueError:
+                    # Failed to convert, log or pass, then continue to next line or fallback
+                    logger.warning(f"Found score-like text \"{score_str}\" with keyword but failed to parse as float.")
+                    pass 
+        
+        if score is not None: # If score was found by keyword pattern, no need to check standalone
+            break
+
+        # Fallback: Try Pattern 2 (standalone number) only if keyword pattern didn't yield a score for this line
+        # This is applied to the current line being processed.
+        # We are looking for numbers that could be scores, especially if they are simple numbers on a line.
+
+        # First, check if the entire line is just a number (strongest indicator for a standalone score)
+        if re.fullmatch(r"\d+(?:\.\d+)?", line_cleaned):
             try:
-                score_val_str = line_lower.split("score:")[1].strip().split()[0]
-                score = float(score_val_str)
-                break
-            except:
-                pass
-        else: # Try to parse if the line itself is just the score number
-            try:
-                potential_score = float(line.strip().split()[0])
-                if 1 <= potential_score <= 10:
+                potential_score = float(line_cleaned)
+                # For scores that are just numbers on a line, we might still want a range check
+                # if there's a known, fixed score range (e.g. 1-5, 0-10). Assuming 0-10 for now as common.
+                if 0 <= potential_score <= 10: # Adjust range if needed
                     score = potential_score
-                    break # Assume this is the score if it's a single number in range
-            except:
-                pass 
+                    break # Found a score that is the entire line content and in range
+            except ValueError:
+                pass # Not a float, ignore
+
+        if score is not None: # If score found as full line number, stop.
+            break
+            
+        # If the line isn't *just* a number, try to find standalone numbers within it (e.g., at the end of a sentence)
+        # using the standalone_score_pattern. We take the *last* such number on the line.
+        # This is more speculative, so we apply a stricter range check (e.g. 0-10).
+        else:
+            all_standalone_matches = list(re.finditer(standalone_score_pattern, line_cleaned))
+            if all_standalone_matches:
+                last_match_str = all_standalone_matches[-1].group(1) # Get the string of the last matched number
+                try:
+                    potential_score = float(last_match_str)
+                    # Apply a range check for these less certain scores
+                    if 0 <= potential_score <= 10: # Common score range
+                        score = potential_score
+                        # If we found a standalone number that fits criteria, break from line loop
+                        break 
+                except ValueError:
+                    pass # Not a float, ignore
+
+        if score is not None: # If score found by any means on this line, break from line loop
+            break
+            
     return {"score": score, "raw_judge_response": judge_response_text}
 
 
