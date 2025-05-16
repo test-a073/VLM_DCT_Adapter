@@ -1,115 +1,411 @@
+import argparse
+import json
+import os
 import yaml
+import logging
+import re
+from typing import Dict, Any, List, Optional
+
 import torch
-# from adapter.my_adapter import DCTAdapter #FrequencyGatedDCTAdapter
-from adapter.my_adapter import DCTAdapter
-from models.vlm_loader import load_vlm
-from dataset.dataset_loader import load_dataset_vlm
-from runner.evaluate import evaluate_model
-from runner.train import train_model, freeze_model_except_adapters
-from peft import LoraConfig, get_peft_model, IA3Config
-from peft import LoHaConfig,AdaLoraConfig, LoKrConfig
+from datasets import load_dataset, Dataset, DatasetDict
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from tqdm import tqdm
 
-def inject_adapters(model, adapter_cls, adapter_args,layers):
-    for name, module in model.named_modules():
-        print(name)
-        # print(layers)
-        # if "model.layers.27.input_layernorm" in name:
-        for layer in layers:
-            
-            if layer['name'] in name:
-                # print('Injecting:', name)
-                parent = get_parent_module(model, name)
-                setattr(parent, name.split('.')[-1], torch.nn.Sequential(module, adapter_cls(**adapter_args)))
-        # if isinstance(module, torch.nn.Linear):
-        #     parent = get_parent_module(model, name)
-        #     setattr(parent, name.split('.')[-1], torch.nn.Sequential(module, adapter_cls(**adapter_args)))
-    return model
+# Assuming evaluator scripts are in a subdirectory or accessible in PYTHONPATH
+# If they are in 'evaluator' subdirectory:
+from evaluator.generic_evaluator import GenericLLMEvaluator
+# from evaluator.cascade_evaluator import CascadeEvaluator # If needed
 
-def get_parent_module(model, name):
-    names = name.split('.')
-    for n in names[:-1]:
-        model = getattr(model, n)
-    return model
+try:
+    from mmengine.config import ConfigDict
+except ImportError:
+    logging.warning("mmengine.config.ConfigDict not found. Using a basic dict wrapper.")
+    class ConfigDict(dict):
+        def __getattr__(self, name):
+            try:
+                return self[name]
+            except KeyError:
+                raise AttributeError(name)
+        def __setattr__(self, name, value):
+            self[name] = value
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# --- Helper Functions (adapted from evaluation.py) ---
+
+def load_openai_config(config_path: str) -> dict:
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    logger.warning(f"OpenAI config file not found at {config_path}")
+    return {}
+
+def simple_text_summarizer_postprocessor(judge_response_text: str) -> Dict[str, Any]:
+    """Postprocessor to extract a score from judge response text using regex."""
+    score = None
+    lines = judge_response_text.strip().split('\n')
+    score_keyword_pattern = r"(?:score|评[分价测]|得分)[:：]?\s*(\d+(?:\.\d+)?)(?:/\d+)?"
+    standalone_score_pattern = r"(?<![a-zA-Z0-9\._-])(\b\d+(?:\.\d+)?\b)(?![a-zA-Z0-9\._-])"
+
+    for line in reversed(lines):
+        line_cleaned = line.strip()
+        if not line_cleaned:
+            continue
+        match = re.search(score_keyword_pattern, line_cleaned, re.IGNORECASE)
+        if match:
+            score_str = match.group(1)
+            if score_str:
+                try:
+                    score = float(score_str)
+                    break
+                except ValueError:
+                    logger.warning(f"Found score-like text \"{score_str}\" with keyword but failed to parse as float.")
+                    pass
+        if score is not None:
+            break
+        if re.fullmatch(r"\d+(?:\.\d+)?", line_cleaned):
+            try:
+                potential_score = float(line_cleaned)
+                if 0 <= potential_score <= 10:
+                    score = potential_score
+                    break
+            except ValueError:
+                pass
+        if score is not None:
+            break
+        else:
+            all_standalone_matches = list(re.finditer(standalone_score_pattern, line_cleaned))
+            if all_standalone_matches:
+                last_match_str = all_standalone_matches[-1].group(1)
+                try:
+                    potential_score = float(last_match_str)
+                    if 0 <= potential_score <= 10:
+                        score = potential_score
+                        break
+                except ValueError:
+                    pass
+        if score is not None:
+            break
+    return {"score": score, "raw_judge_response": judge_response_text}
+
+def generate_predictions(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    dataset_split: Dataset,
+    device: str,
+    max_new_tokens: int = 512
+) -> List[Dict[str, Any]]:
+    logger.info(f"Generating predictions for {len(dataset_split)} samples...")
+    predictions_data = []
+    for example in tqdm(dataset_split, desc="Generating Predictions"):
+        conv_id = example.get("id", "unknown_id")
+        # Assuming dataset has 'query' and 'reference' (optional)
+        # For mtbench, 'history' is used. We need the last user turn as query.
+        history = example.get("history")
+        if not history or not isinstance(history, list) or not history[-1].get("user"):
+            current_prompt_text = example.get("query", "") # Fallback if history is not as expected
+            if not current_prompt_text:
+                 logger.warning(f"Skipping item {conv_id} due to missing user prompt in history or query field.")
+                 predictions_data.append({
+                    "id": conv_id, "task_category": example.get("task_category", "N/A"),
+                    "model_input": "Error: Missing prompt", "prediction": "Error: Missing prompt",
+                    "reference_answer": example.get("reference", "N/A"), "full_history": history
+                 })
+                 continue
+        else:
+            current_prompt_text = history[-1]["user"]
+
+        reference_answer = history[-1].get("bot", example.get("reference", "N/A"))
+        
+        model_input_text = current_prompt_text
+
+        try:
+            inputs = tokenizer(model_input_text, return_tensors="pt", truncation=True, max_length=2048).to(device) # Added truncation
+            with torch.no_grad():
+                generated_ids = model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True, # Consistent with evaluation.py
+                    pad_token_id=tokenizer.eos_token_id # Add pad_token_id for open-ended generation
+                )
+            # Ensure decoding handles cases where input is part of the output
+            # For instruct models, often the prompt is not repeated.
+            # If prompt is repeated, use: result = tokenizer.decode(generated_ids[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+            result = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+            # A simple way to remove prompt if it's there, more robust methods might be needed
+            if result.startswith(model_input_text):
+                parsed_answer = result[len(model_input_text):].strip()
+            else:
+                parsed_answer = result.strip()
+
+            predictions_data.append({
+                "id": conv_id,
+                "task_category": example.get("task_category", "N/A"),
+                "model_input": model_input_text,
+                "prediction": parsed_answer,
+                "reference_answer": reference_answer,
+                "full_history": history
+            })
+        except Exception as e:
+            logger.warning(f"Error generating prediction for ID {conv_id}: {e}")
+            predictions_data.append({
+                "id": conv_id, "task_category": example.get("task_category", "N/A"),
+                "model_input": model_input_text, "prediction": f"Error: {e}",
+                "reference_answer": reference_answer, "full_history": history
+            })
+    return predictions_data
+
+def run_evaluation_pipeline(
+    model_name_or_path: str,
+    model_to_evaluate: AutoModelForCausalLM, # Pass the loaded model
+    tokenizer: AutoTokenizer, # Pass the loaded tokenizer
+    eval_dataset: Dataset,
+    args: argparse.Namespace,
+    output_suffix: str = ""
+) -> Optional[float]:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model_to_evaluate.to(device)
+    model_to_evaluate.eval()
+
+    # 1. Generate Predictions
+    predictions_output_filename = f"predictions_{output_suffix}.jsonl"
+    predictions_output_filepath = os.path.join(args.eval_output_dir, predictions_output_filename)
+    
+    generated_preds_list = generate_predictions(model_to_evaluate, tokenizer, eval_dataset, device, args.max_new_tokens)
+    
+    with open(predictions_output_filepath, 'w') as f:
+        for item in generated_preds_list:
+            f.write(json.dumps(item) + '\n')
+    logger.info(f"Predictions for {output_suffix} saved to {predictions_output_filepath}")
+
+    # 2. Prepare dataset for evaluator
+    dataset_for_eval_dict = {
+        "query": [], "prediction": [], "reference": [], "id": [], "task_category": []
+    }
+    valid_predictions_count = 0
+    for item in generated_preds_list:
+        if not item["prediction"].startswith("Error:"):
+            dataset_for_eval_dict["query"].append(item["model_input"])
+            dataset_for_eval_dict["prediction"].append(item["prediction"])
+            ref = item["reference_answer"]
+            if isinstance(ref, list): # Ensure reference is a string
+                ref = " ".join(r for r in ref if isinstance(r, str)) if all(isinstance(r, str) for r in ref) else str(ref)
+            dataset_for_eval_dict["reference"].append(ref)
+            dataset_for_eval_dict["id"].append(item["id"])
+            dataset_for_eval_dict["task_category"].append(item.get("task_category", "N/A"))
+            valid_predictions_count += 1
+    
+    if valid_predictions_count == 0:
+        logger.warning(f"No successful predictions to evaluate for {output_suffix}. Skipping evaluation.")
+        final_score_value = "N/A (No valid predictions)"
+    else:
+        eval_hf_dataset = Dataset.from_dict(dataset_for_eval_dict)
+        logger.info(f"Prepared {len(eval_hf_dataset)} samples for the evaluator for {output_suffix}.")
+
+        # 3. Configure and Run Evaluator
+        openai_params = load_openai_config(args.openai_config_path)
+        judge_cfg_dict = {
+            "model": args.judge_model_name,
+            "key": openai_params.get("api_key"),
+            "openai_api_base": openai_params.get("base_url"),
+            "temperature": 0.0, "max_out_len": 1024, "query_per_second": 1,
+            "system_prompt_content": args.judge_system_prompt
+        }
+        prompt_template_dict = {
+            "template": "[Instruction]\nPlease act as an impartial judge and evaluate the quality of the response provided by an AI assistant to the user question displayed below. "
+                         "Your evaluation should consider factors such as helpfulness, relevance, accuracy, depth, creativity, and level of detail of the response. "
+                         "Begin your evaluation by providing a short explanation. Be as objective as possible. "
+                         "After providing your explanation, you must rate the response on a scale of 1 to 10 by strictly outputting a single line with only the score. "
+                         "Do not output any other text after the score. "
+                         "\n\n[Question]\n{query}\n\n[The Start of Assistant's Answer]\n{prediction}\n[The End of Assistant's Answer]"
+                         "\n\n[Reference Answer (if available)]\n{reference}\n[The End of Reference Answer]",
+            "input_columns": ["query", "prediction", "reference"],
+        }
+        evaluator_results_filename = f"{args.evaluator_type}_results_{output_suffix}.json"
+        evaluator_output_path = os.path.join(args.eval_output_dir, evaluator_results_filename)
+
+        judge_config = ConfigDict(judge_cfg_dict)
+        prompt_template_config = ConfigDict(prompt_template_dict)
+
+        evaluator = GenericLLMEvaluator(
+            judge_cfg=judge_config,
+            prompt_template=prompt_template_config,
+            dict_postprocessor=simple_text_summarizer_postprocessor,
+            output_path=evaluator_output_path
+        )
+
+        logger.info(f"Running evaluation with {args.evaluator_type} for {output_suffix}...")
+        evaluation_results = evaluator.score(
+            predictions=list(eval_hf_dataset["prediction"]),
+            test_set=eval_hf_dataset
+        )
+        logger.info(f"Raw Evaluation Results for {output_suffix}:")
+        try:
+            logger.info(json.dumps(evaluation_results, indent=4))
+        except TypeError:
+            logger.info(str(evaluation_results))
+
+        final_score_value = "N/A"
+        if isinstance(evaluation_results, dict) and "average_score" in evaluation_results:
+            final_score_value = evaluation_results["average_score"]
+            num_scored = evaluation_results.get('num_scored', 'N/A')
+            logger.info(f"Average Judge Score for {output_suffix}: {final_score_value:.2f} (Scored items: {num_scored})")
+        else:
+            logger.warning(f"Could not determine average_score from evaluation results for {output_suffix}.")
+
+
+    # 4. Save Score File
+    score_file_name = f"{model_name_or_path.replace('/', '_')}_{output_suffix}_score.txt"
+    score_file_path = os.path.join(args.eval_output_dir, score_file_name)
+    try:
+        with open(score_file_path, 'w') as f:
+            f.write(f"Model: {model_name_or_path} ({output_suffix})\n")
+            f.write(f"Dataset: {args.dataset_path}\n")
+            f.write(f"Evaluator: {args.evaluator_type}\n")
+            f.write(f"Judge Model: {args.judge_model_name}\n")
+            f.write(f"Evaluation Split Size: {args.num_eval_samples}\n")
+            f.write(f"Final Score: {final_score_value}\n")
+        logger.info(f"Evaluation score for {output_suffix} saved to {score_file_path}")
+    except Exception as e:
+        logger.error(f"Failed to write score to file {score_file_path}: {e}", exc_info=True)
+    
+    if isinstance(final_score_value, (float, int)):
+        return float(final_score_value)
+    return None
+
+# --- Main Script Logic ---
 
 def main():
-    with open("config/config.yaml", "r") as f:
-        config = yaml.safe_load(f)
+    parser = argparse.ArgumentParser(description="Evaluate original and adapted Mistral models.")
+    parser.add_argument("--model_name_or_path", type=str, default="mistralai/Mistral-7B-Instruct-v0.2", help="Path to the base Mistral model.")
+    parser.add_argument("--dataset_path", type=str, default="evaluator/benchmark_datasets/mtbench101.jsonl", help="Path to the benchmark dataset (JSONL format).")
+    parser.add_argument("--num_train_samples", type=int, default=2, help="Number of samples for training/adaptation.")
+    parser.add_argument("--num_eval_samples", type=int, default=2, help="Number of samples for evaluation.")
+    parser.add_argument("--max_new_tokens", type=int, default=512, help="Max new tokens for generation.")
+    parser.add_argument("--eval_output_dir", type=str, default="./eval_results_injection", help="Directory for all outputs.")
+    parser.add_argument("--openai_config_path", type=str, default="evaluator/openai_config.yaml", help="Path to OpenAI config.") # Adjusted path
+    parser.add_argument("--evaluator_type", type=str, default="GenericLLMEvaluator", choices=["GenericLLMEvaluator"], help="Evaluator type.")
+    parser.add_argument("--judge_model_name", type=str, default="gpt-4", help="Judge model name.")
+    parser.add_argument("--judge_system_prompt", type=str, default=None, help="System prompt for the judge.")
+    # Add other arguments from evaluation.py if needed, e.g., for specific model/evaluator configs
+    args = parser.parse_args()
 
-    for model_cfg in config["models"]:
-        print("Model ", model_cfg["name"])
-        model = load_vlm(model_cfg["name"])
-        if config.get("adapter", {}).get("do_adapt", False):
-            print("Injecting Adapters.....")
-            model = inject_adapters(model, DCTAdapter, config["adapter"]["params"], config["adapter"]["layers"])
-            freeze_model_except_adapters(model)
-        if config.get("adapter", {}).get("do_peft", False):
-            print('Do PEFT.....')
-            peft_config = LoraConfig(
-                lora_alpha=16,
-                lora_dropout=0.05,
-                r=3,
-                bias="none",
-                target_modules=["q_proj", "v_proj"],
-                task_type="CAUSAL_LM",
+    os.makedirs(args.eval_output_dir, exist_ok=True)
+
+    # 1. Load and Split Dataset
+    logger.info(f"Loading dataset from {args.dataset_path}...")
+    try:
+        # Load the full dataset
+        full_dataset_list = []
+        with open(args.dataset_path, 'r') as f:
+            for line in f:
+                full_dataset_list.append(json.loads(line))
+        
+        if len(full_dataset_list) < args.num_train_samples + args.num_eval_samples:
+            logger.error(f"Dataset has {len(full_dataset_list)} samples, but "
+                         f"{args.num_train_samples + args.num_eval_samples} are required for train+eval. Aborting.")
+            return
+
+        # Split dataset
+        train_list = full_dataset_list[:args.num_train_samples]
+        eval_list = full_dataset_list[args.num_train_samples : args.num_train_samples + args.num_eval_samples]
+
+        # Convert to Hugging Face Dataset objects
+        # Need to ensure the lists of dicts are correctly formatted for Dataset.from_list
+        # Assuming each item in train_list/eval_list is a dict compatible with Dataset.from_list
+        train_dataset = Dataset.from_list(train_list)
+        eval_dataset = Dataset.from_list(eval_list)
+        
+        logger.info(f"Dataset loaded. Training samples: {len(train_dataset)}, Evaluation samples: {len(eval_dataset)}")
+
+    except Exception as e:
+        logger.error(f"Error loading or splitting dataset: {e}", exc_info=True)
+        return
+
+    # 2. Load Tokenizer (shared for both models)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token # Set pad token if not present
+            logger.info(f"Tokenizer pad_token was None, set to eos_token: {tokenizer.eos_token}")
+    except Exception as e:
+        logger.error(f"Failed to load tokenizer for {args.model_name_or_path}: {e}", exc_info=True)
+        return
+        
+    # --- Evaluate Original Model ---
+    logger.info(f"--- Starting Evaluation for Original Model: {args.model_name_or_path} ---")
+    try:
+        original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+        run_evaluation_pipeline(
+            model_name_or_path=args.model_name_or_path,
+            model_to_evaluate=original_model,
+            tokenizer=tokenizer,
+            eval_dataset=eval_dataset,
+            args=args,
+            output_suffix="original"
+        )
+        del original_model # Free memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as e:
+        logger.error(f"Error during original model evaluation: {e}", exc_info=True)
+
+
+    # --- Adapter Injection and Evaluation for Adapted Model ---
+    logger.info(f"--- Starting Evaluation for Adapted Model: {args.model_name_or_path} + Adapter ---")
+    adapted_model = None # Initialize
+    try:
+        # **TODO: User specific adapter injection and model loading/modification logic here **
+        # This is a placeholder. You need to implement how the adapter is loaded and applied.
+        # The 'train_dataset' (first 50 samples) is available as `train_dataset`
+        # You might reload the base model and then apply the adapter, or load a checkpoint.
+        
+        logger.info(f"Placeholder for loading base model ({args.model_name_or_path}) and injecting adapter...")
+        # Example: adapted_model = load_mistral_with_my_adapter(args.model_name_or_path, adapter_path="path/to/your/adapter", training_data=train_dataset)
+        # For now, we'll re-load the original model as a stand-in for the adapted model.
+        # Replace this with your actual adapted model loading.
+        
+        # SIMULATING ADAPTED MODEL LOADING (replace with actual logic)
+        # If your adaptation process modifies the model in-place and you want to simulate this,
+        # ensure the model is correctly prepared.
+        # For a clean test, it's often better to load the base model anew then apply adaptation.
+        
+        logger.warning("USING ORIGINAL MODEL AS A PLACEHOLDER FOR ADAPTED MODEL. REPLACE THIS WITH YOUR ADAPTER INJECTION LOGIC.")
+        adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path) # Placeholder
+        
+        # >>> START OF USER'S ADAPTER INJECTION AND TRAINING CODE <<<
+        # Example:
+        # my_adapter = load_my_adapter_from_checkpoint("path/to/adapter_checkpoint.pt")
+        # adapted_model = inject_adapter_into_model(adapted_model, my_adapter)
+        # logger.info("Adapter injected.")
+        # if args.perform_adaptation_training:
+        #   logger.info(f"Performing adaptation training using {len(train_dataset)} samples...")
+        #   adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset)
+        #   logger.info("Adaptation training complete.")
+        # >>> END OF USER'S ADAPTER INJECTION AND TRAINING CODE <<<
+
+        if adapted_model: # Proceed only if adapted_model is loaded
+            run_evaluation_pipeline(
+                model_name_or_path=args.model_name_or_path, # Base model name for reporting
+                model_to_evaluate=adapted_model,
+                tokenizer=tokenizer,
+                eval_dataset=eval_dataset,
+                args=args,
+                output_suffix="adapted"
             )
-            # peft_config = IA3Config(
-            #     task_type="CAUSAL_LM", 
-            #     target_modules=["k_proj", "v_proj", "down_proj"], 
-            #     feedforward_modules=["down_proj"]
-            # )
-            
-            # peft_config= LoHaConfig(
-            #     r=16,
-            #     alpha=16,
-            #     target_modules=["q_proj", "v_proj"],
-            #     module_dropout=0.1,
-            #     modules_to_save=["classifier"],
-            #     task_type="CAUSAL_LM"
-            # )
+        else:
+            logger.error("Adapted model was not loaded. Skipping evaluation for adapted model.")
 
-            # peft_config = AdaLoraConfig(
-            #     r=8,
-            #     init_r=12,
-            #     tinit=200,
-            #     tfinal=1000,
-            #     deltaT=10,
-            #     total_step=10000,
-            #     target_modules=["q_proj", "v_proj"],
-            #     task_type="CAUSAL_LM",
-            # )
-            # peft_config = LoKrConfig(
-            #     r=16,
-            #     alpha=16,
-            #     target_modules=["q_proj", "v_proj"],
-            #     module_dropout=0.1,
-            #     task_type="CAUSAL_LM",
-            #     # modules_to_save=["classifier"],
-            # )
+        del adapted_model # Free memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-            # Apply PEFT model adaptation
-            model = get_peft_model(model, peft_config)
-            model.print_trainable_parameters()
-        for dataset_cfg in config["datasets"]:
-            dataset,processor = load_dataset_vlm(dataset_cfg["name"])
+    except Exception as e:
+        logger.error(f"Error during adapted model evaluation: {e}", exc_info=True)
 
-            if config.get("train", {}).get("do_train", False):
-                print(f"Training on {dataset_cfg['name']}...")
-                # 
-                train_model(
-                    model,
-                    config,
-                    dataset,
-                    processor,
-                    batch_size=config["train"]["batch_size"],
-                    epochs=config["train"]["epochs"],
-                    lr=config["train"]["lr"],
-                )
-
-            print(f"Evaluating on {dataset_cfg['name']}...")
-            acc = evaluate_model(model,config, dataset,processor)
-            print("accuracy ", acc)
-            print("ALLL_DONE!!!!")
-            print(f"Model: {model_cfg['name']}, Dataset: {dataset_cfg['name']}, Accuracy: {acc:.4f}")
+    logger.info("--- Main Mistral Injection Script Finished ---")
 
 if __name__ == "__main__":
     main()
