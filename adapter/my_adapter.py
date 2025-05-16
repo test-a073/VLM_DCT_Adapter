@@ -33,19 +33,20 @@ class DCTAdapter(nn.Module):
         return dct
 
     def forward(self, hidden_states):
-        print("This is the hidden states shape:", hidden_states.shape)
+        # print("This is the hidden states shape:", hidden_states.shape)
         dct = self.dct1(hidden_states)  # [B, T, C]
 
-
-        # gated_dct = dct * gate_mask  # broadcasted over B and T
-
         z = dct.reshape(-1, dct.shape[-1])  # [B*T, C]
-        # z_pert = self.adapter_up(F.leaky_relu(self.adapter_down(z)))
+        z_pert = self.adapter_up(F.leaky_relu(self.adapter_down(z)))
         out = z_pert.view_as(dct)
         idct = self.idct1(out)
-        return hidden_states + idct  # residual connection
+        return hidden_states + idct # 32.00
+        # return idct # 20.00
+#         # return hidden_states + (1/10)*idct  # residual connection
+        # return 0.5*hidden_states + 0.5*idct # 30.00
 
 
 # max pool -> low dimension 
 # dconv layer -> up sample
 # reduce r in lora so that the params equal to our number of params
+

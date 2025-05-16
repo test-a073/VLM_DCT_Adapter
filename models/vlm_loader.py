@@ -25,16 +25,17 @@ def load_vlm(model_name):
             # torch_dtype=config.TORCH_DTYPE,
             attn_implementation="eager"
         )
+        return florence_base_model
     elif model_name == "florence-large":
 
-        florence_base_model = AutoModelForCausalLM.from_pretrained(
+        florence_large_model = AutoModelForCausalLM.from_pretrained(
             "microsoft/Florence-2-large-ft",
             trust_remote_code=True,
             # revision=config.BASE_MODEL_REVISION, 
             # torch_dtype=config.TORCH_DTYPE,
             attn_implementation="eager"
         )
-        return florence_base_model
+        return florence_large_model
 
     else:
         raise ValueError(f"Unknown model {model_name}")

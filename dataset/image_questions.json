@@ -1,0 +1,302 @@
+[
+    {
+        "question_id": "be767b7a-6d43-40ab-bfed-20341f16b582",
+        "question": "What type of room is shown in the image?",
+        "image_id": "image",
+        "answer": "The image shows a kitchen."
+    },
+    {
+        "question_id": "b453ad9e-6b71-4907-bbff-f039ec49a537",
+        "question": "How many bar stools can be seen around the island?",
+        "image_id": "image",
+        "answer": "There are three bar stools."
+    },
+    {
+        "question_id": "f2237922-7b23-4eed-85f9-0b6b1329b953",
+        "question": "What items are placed on the kitchen island?",
+        "image_id": "image",
+        "answer": "There is a vase with yellow flowers and some citrus fruits on the kitchen island."
+    },
+    {
+        "question_id": "6b20e657-fca1-444e-868f-15c936368e92",
+        "question": "What style of lighting fixture is hanging over the kitchen island?",
+        "image_id": "image",
+        "answer": "There are two chandelier-style lighting fixtures over the island."
+    },
+    {
+        "question_id": "acab4e4d-0e38-4ba0-a96a-e1094bf777ee",
+        "question": "What type of stove is in the kitchen?",
+        "image_id": "image",
+        "answer": "The kitchen has a gas stove."
+    },
+    {
+        "question_id": "254026da-53ef-4e94-84ac-e628ef574995",
+        "question": "Can you see any kitchen appliances? If yes, name them.",
+        "image_id": "image",
+        "answer": "Yes, there is a refrigerator and a microwave visible."
+    },
+    {
+        "question_id": "628bf751-669a-48b5-8c80-ac7248268771",
+        "question": "What color are the kitchen cabinets?",
+        "image_id": "image",
+        "answer": "The kitchen cabinets are dark brown."
+    },
+    {
+        "question_id": "95484484-add5-4235-adc5-68587ec5cacf",
+        "question": "Is there a tile backsplash in the kitchen? Describe it.",
+        "image_id": "image",
+        "answer": "Yes, there is a tile backsplash with a beige and light brown design."
+    },
+    {
+        "question_id": "725ba5f9-e3ac-47ce-a798-ca67327e8df6",
+        "question": "How many ovens can be seen and where are they located?",
+        "image_id": "image",
+        "answer": "Two ovens can be seen, built into the cabinetry next to the refrigerator."
+    },
+    {
+        "question_id": "7d79eca9-6d42-4403-8118-0d1031e1c1ad",
+        "question": "What type of fruit can be seen in the kitchen?",
+        "image_id": "image",
+        "answer": "There are oranges and lemons in the kitchen."
+    },
+    {
+        "question_id": "d328643c-9623-4fa1-929c-b13b944e5df1",
+        "question": "Describe the countertops in the kitchen.",
+        "image_id": "image",
+        "answer": "The countertops are made of granite with a predominantly off-white color with streaks of gray and brown."
+    },
+    {
+        "question_id": "c5d44675-81a4-4918-84c4-35d04e476ddd",
+        "question": "Is there any printed pottery visible? Describe or mention its location.",
+        "image_id": "image",
+        "answer": "Yes, there is printed pottery located above the range in the cabinets."
+    },
+    {
+        "question_id": "81aff908-9759-4172-9ce6-c5498b01ac2b",
+        "question": "Are there any windows in the kitchen? If yes, how many?",
+        "image_id": "image",
+        "answer": "No windows are visible in the kitchen."
+    },
+    {
+        "question_id": "763a7b9b-6ccc-43bb-a915-01ac09dc26fb",
+        "question": "What type of floor does the kitchen have?",
+        "image_id": "image",
+        "answer": "The kitchen has a tiled floor with a subtly patterned beige color."
+    },
+    {
+        "question_id": "a2873926-ca32-4d44-a2b1-dd075d601d1a",
+        "question": "What other decorative items can be seen in the kitchen?",
+        "image_id": "image",
+        "answer": "Besides the pottery and flowers, there are decorative plates above the range hood."
+    },
+    {
+        "question_id": "23287434-fdb7-48d5-bba3-6e88cdebef2c",
+        "question": "What colors dominate the kitchen's color scheme?",
+        "image_id": "image",
+        "answer": "The dominant colors in the kitchen are brown, beige, and white."
+    },
+    {
+        "question_id": "5be77282-feb9-4fcf-a1cb-dffda6b33380",
+        "question": "Describe the range hood, and its style.",
+        "image_id": "image",
+        "answer": "The range hood is large, white, and has ornate woodwork, complementing the traditional style of the kitchen."
+    },
+    {
+        "question_id": "2b04471c-9695-42a9-a5b0-f73f87793aad",
+        "question": "Can you identify any herbs or plants in the kitchen?",
+        "image_id": "image",
+        "answer": "No herbs or plants are visible other than the bouquet of yellow flowers."
+    },
+    {
+        "question_id": "57a822c8-fea7-411b-a3b6-887b9279db3b",
+        "question": "Is there a dishwasher visible in the kitchen?",
+        "image_id": "image",
+        "answer": "No dishwasher is visible in the image."
+    },
+    {
+        "question_id": "1b263fec-8e8b-4b4a-9595-1d47626adcba",
+        "question": "What is the overall style of the kitchen\u2019s design?",
+        "image_id": "image",
+        "answer": "The overall style of the kitchen is traditional with ornate woodwork and classic fixtures."
+    },
+    {
+        "question_id": "b7fe15b7-0c7d-4704-8b48-779adf887ac7",
+        "question": "Are there any seating items other than the bar stools?",
+        "image_id": "image",
+        "answer": "No other seating items are visible besides the bar stools."
+    },
+    {
+        "question_id": "c3c2513f-bc64-473f-9627-b46dad9379f0",
+        "question": "What items are hung on the side of the kitchen island?",
+        "image_id": "image",
+        "answer": "There are two oven mitts hung on the side of the kitchen island."
+    },
+    {
+        "question_id": "37a1c2cc-4d44-498c-b1ab-5495c11e19bb",
+        "question": "Is there a visible heating system or cooling system in the kitchen?",
+        "image_id": "image",
+        "answer": "No heating or cooling systems are visible in the image."
+    },
+    {
+        "question_id": "ecc0d374-f123-4d3f-b29b-46971cabc24a",
+        "question": "What is the shape of the kitchen island?",
+        "image_id": "image",
+        "answer": "The kitchen island has a rectangular shape."
+    },
+    {
+        "question_id": "15a3248e-27c8-4ca9-9524-f3817a4244d7",
+        "question": "Describe any visible flooring transitions or peculiarities.",
+        "image_id": "image",
+        "answer": "No transitions or peculiarities in the flooring are visible; it appears consistently tiled throughout the kitchen."
+    },
+    {
+        "question_id": "34c18286-9bd6-4f79-b034-74940c3f6748",
+        "question": "What type of room is shown in the image?",
+        "image_id": "image",
+        "answer": "The image shows a kitchen."
+    },
+    {
+        "question_id": "5b00631c-76fd-48c6-a6a4-78c93c8b8897",
+        "question": "What style are the kitchen cabinets?",
+        "image_id": "image",
+        "answer": "The kitchen cabinets have a traditional style."
+    },
+    {
+        "question_id": "1c297451-ee93-4cc0-b037-04f8322a5dd7",
+        "question": "What is the predominant color scheme of the kitchen?",
+        "image_id": "image",
+        "answer": "The predominant colors are brown and beige."
+    },
+    {
+        "question_id": "39bea785-56d5-4d1c-904d-2ec4249f8766",
+        "question": "What type of countertop is used in the kitchen island?",
+        "image_id": "image",
+        "answer": "The countertop is made of granite."
+    },
+    {
+        "question_id": "97577d1d-122e-4c96-a154-1749f811758f",
+        "question": "How many bar stools are visible in the image?",
+        "image_id": "image",
+        "answer": "There are three bar stools visible."
+    },
+    {
+        "question_id": "2c32864f-0edf-477d-b9bb-6194bb03ac76",
+        "question": "What kind of lighting fixture is hanging above the island?",
+        "image_id": "image",
+        "answer": "There is a chandelier hanging above the island."
+    },
+    {
+        "question_id": "166f8209-d8a7-44ca-9a68-3df1965ddb0a",
+        "question": "Can you identify any decorative items on top of the kitchen cabinets?",
+        "image_id": "image",
+        "answer": "There are some decorative ceramic plates on top of the kitchen cabinets."
+    },
+    {
+        "question_id": "847582a7-8d22-48e8-84e6-22a1f215fa5a",
+        "question": "What type of floor is used in the kitchen?",
+        "image_id": "image",
+        "answer": "The floor is tiled."
+    },
+    {
+        "question_id": "436687ec-2e49-48e7-87d9-60b57f020172",
+        "question": "Is there a visible backsplash, and if so, what material is it?",
+        "image_id": "image",
+        "answer": "Yes, there is a tile backsplash behind the counters."
+    },
+    {
+        "question_id": "44428637-6942-4ded-a32b-fb8088c9305a",
+        "question": "What type of fruit is displayed in the bowl on the kitchen island?",
+        "image_id": "image",
+        "answer": "The bowl contains oranges and flowers."
+    },
+    {
+        "question_id": "dbb573c9-fe51-4c05-8098-55d82cc34a29",
+        "question": "What type of range is installed in the kitchen?",
+        "image_id": "image",
+        "answer": "The kitchen has a gas range."
+    },
+    {
+        "question_id": "517d8428-b0de-47b0-ac3d-9a1930215742",
+        "question": "How many oven units can you see, and what kind?",
+        "image_id": "image",
+        "answer": "There appears to be one built-in oven unit."
+    },
+    {
+        "question_id": "e5acd500-5cbf-440e-ab33-2a0a751de267",
+        "question": "What material are the handles of the kitchen cabinets?",
+        "image_id": "image",
+        "answer": "The handles are made of metal."
+    },
+    {
+        "question_id": "95c195a6-1cab-4f18-95df-46666ea9e0c5",
+        "question": "Are there any visible kitchen appliances, and if so, what kinds?",
+        "image_id": "image",
+        "answer": "A refrigerator is visible in the background."
+    },
+    {
+        "question_id": "f655b323-af48-45a6-8c69-42e9cc71b75e",
+        "question": "What is the color of the kitchen island\u2019s base?",
+        "image_id": "image",
+        "answer": "The base of the kitchen island is white."
+    },
+    {
+        "question_id": "a5af684b-2512-438d-8556-8b67709e137e",
+        "question": "Is there any visible kitchen ventilation system?",
+        "image_id": "image",
+        "answer": "Yes, there is a range hood above the stove."
+    },
+    {
+        "question_id": "4984d404-b2ce-4642-9e17-a4e469190f8a",
+        "question": "What is hung on the walls of the kitchen, if anything?",
+        "image_id": "image",
+        "answer": "There are no items visibly hung on the walls."
+    },
+    {
+        "question_id": "b340a1a6-e2c4-4207-b2a2-31e31ed07a72",
+        "question": "What item is hanging from the kitchen cabinet closest to the camera on the right?",
+        "image_id": "image",
+        "answer": "There is a pair of oven mitts hanging from the cabinet."
+    },
+    {
+        "question_id": "03609be9-bb0c-4e2f-a1d4-ae90e42e2df0",
+        "question": "Is there anything under the bar stools, such as a rug or mat?",
+        "image_id": "image",
+        "answer": "No, there is no rug or mat under the bar stools."
+    },
+    {
+        "question_id": "a367bffe-c101-4e84-a8e1-dfaac8073f8f",
+        "question": "What type of sink is installed in the kitchen island?",
+        "image_id": "image",
+        "answer": "There is an undermount sink installed in the kitchen island."
+    },
+    {
+        "question_id": "d5496807-b94c-4128-93a9-b749ae53009e",
+        "question": "How is the kitchen decorated regarding plant life?",
+        "image_id": "image",
+        "answer": "There are flowers in a vase on the kitchen island."
+    },
+    {
+        "question_id": "d605c006-8405-416e-89fe-b39705be6f35",
+        "question": "Is there any visible cooking equipment on the stove?",
+        "image_id": "image",
+        "answer": "No cooking equipment is visible on the stove."
+    },
+    {
+        "question_id": "8e42beaf-f824-4c5c-833c-abe74bb23ec2",
+        "question": "Can any dining accessories be seen in the kitchen area?",
+        "image_id": "image",
+        "answer": "No dining accessories are visible."
+    },
+    {
+        "question_id": "6c83e9f6-d2e2-4f00-8e5b-0f8613000bb3",
+        "question": "Is the refrigerator integrated with cabinet panels or exposed?",
+        "image_id": "image",
+        "answer": "The refrigerator is exposed without cabinet panels."
+    },
+    {
+        "question_id": "9623986a-0129-4ba3-ba77-563b8054461c",
+        "question": "What style is the kitchen\u2019s faucet?",
+        "image_id": "image",
+        "answer": "The kitchen's faucet has a modern and possibly pull-down style."
+    }
+]

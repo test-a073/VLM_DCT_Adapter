@@ -36,6 +36,7 @@ def main():
         config = yaml.safe_load(f)
 
     for model_cfg in config["models"]:
+        print("Model ", model_cfg["name"])
         model = load_vlm(model_cfg["name"])
         if config.get("adapter", {}).get("do_adapt", False):
             print("Injecting Adapters.....")
