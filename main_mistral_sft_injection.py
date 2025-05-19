@@ -361,7 +361,7 @@ def run_evaluation_pipeline(
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate original and adapted Mistral models.")
-    parser.add_argument("--model_name_or_path", type=str, default="mistralai/Mistral-7B-Instruct-v0.2", help="Path to the base Mistral model.")
+    parser.add_argument("--model_name_or_path", type=str, default="HuggingFaceH4/mistral-7b-sft-beta", help="Path to the base Mistral model.")
     parser.add_argument("--dataset_path", type=str, default="evaluator/benchmark_datasets/mtbench101.jsonl", help="Path to the benchmark dataset (JSONL format).")
     parser.add_argument("--num_train_samples", type=int, default=50, help="Number of samples for training/adaptation.")
     parser.add_argument("--num_eval_samples", type=int, default=50, help="Number of samples for evaluation.")

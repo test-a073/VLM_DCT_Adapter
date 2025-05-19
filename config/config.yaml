@@ -16,23 +16,23 @@ adapter:
   name: MyCustomAdapter
   params:
     # input_dim: 768 # this for florence base
-    input_dim: 1024 
-    num_components: 128
+    input_dim: 4096 
+    num_components: 512
   
   layers: 
-    - name: language_model.model.encoder.layers.5.self_attn.v_proj # current highest acc v2
-    - name: language_model.model.encoder.layers.4.self_attn.v_proj
-    - name: language_model.model.encoder.layers.3.self_attn.v_proj
-    - name: language_model.model.encoder.layers.2.self_attn.v_proj
-    - name: language_model.model.encoder.layers.1.self_attn.v_proj
-    - name: language_model.model.encoder.layers.0.self_attn.v_proj
+    # - name: language_model.model.encoder.layers.5.self_attn.v_proj # current highest acc v2
+    # - name: language_model.model.encoder.layers.4.self_attn.v_proj
+    # - name: language_model.model.encoder.layers.3.self_attn.v_proj
+    # - name: language_model.model.encoder.layers.2.self_attn.v_proj
+    # - name: language_model.model.encoder.layers.1.self_attn.v_proj
+    # - name: language_model.model.encoder.layers.0.self_attn.v_proj
 
-    - name: language_model.model.decoder.layers.5.self_attn.v_proj
-    - name: language_model.model.decoder.layers.4.self_attn.v_proj
-    - name: language_model.model.decoder.layers.3.self_attn.v_proj
-    - name: language_model.model.decoder.layers.2.self_attn.v_proj
-    - name: language_model.model.decoder.layers.1.self_attn.v_proj
-    - name: language_model.model.decoder.layers.0.self_attn.v_proj
+    # - name: language_model.model.decoder.layers.5.self_attn.v_proj
+    # - name: language_model.model.decoder.layers.4.self_attn.v_proj
+    # - name: language_model.model.decoder.layers.3.self_attn.v_proj
+    # - name: language_model.model.decoder.layers.2.self_attn.v_proj
+    # - name: language_model.model.decoder.layers.1.self_attn.v_proj
+    # - name: language_model.model.decoder.layers.0.self_attn.v_proj
     # current highest acc v2
 
     # - name: q_proj
@@ -43,6 +43,13 @@ adapter:
 
     # - name: model.layers.25.input_layernorm
     # - name: model.layers.24.input_layernorm
+
+    # FOR MISTRAL MODEL 
+    - name: model.layers.31.self_attn.q_proj
+    - name: model.layers.31.self_attn.k_proj
+    - name: model.layers.31.self_attn.v_proj 
+    - name: model.layers.31.self_attn.o_proj
+    # - name: lm_head
 
 train:
   do_train: true

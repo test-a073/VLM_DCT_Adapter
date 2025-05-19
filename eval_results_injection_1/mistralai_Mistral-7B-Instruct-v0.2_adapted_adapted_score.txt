@@ -1,0 +1,6 @@
+Model: mistralai/Mistral-7B-Instruct-v0.2_adapted (adapted)
+Dataset: evaluator/benchmark_datasets/mtbench101.jsonl
+Evaluator: GenericLLMEvaluator
+Judge Model: gpt-4
+Evaluation Split Size: 50
+Final Score: N/A (No valid predictions)
