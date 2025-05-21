@@ -86,34 +86,7 @@ def inject_adapters(
     return model
 
 # --- Placeholder for functions from runner.train (implement or import them) ---
-def freeze_model_except_adapters(model: torch.nn.Module, adapter_name_pattern: str = "dct_adapter") -> None:
-    """Placeholder: Freezes all parameters except those containing adapter_name_pattern."""
-    logger.warning(f"Placeholder: `freeze_model_except_adapters` called. Implement freezing logic.")
-    # Example (needs refinement based on actual adapter naming):
-    # for name, param in model.named_parameters():
-    #     if adapter_name_pattern not in name:
-    #         param.requires_grad = False
-    #     else:
-    #         param.requires_grad = True
-    #         logger.info(f"Adapter parameter {name} remains trainable.")
-    pass
-
-def train_model_with_adapter(
-    model: torch.nn.Module,
-    tokenizer: AutoTokenizer,
-    train_dataset: Dataset,
-    args: argparse.Namespace # For training specific args like epochs, lr
-) -> torch.nn.Module:
-    """Placeholder: Trains the model with the injected adapter."""
-    logger.warning(f"Placeholder: `train_model_with_adapter` called with {len(train_dataset)} samples. Implement training logic.")
-    # Example training loop structure:
-    # optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.adapter_lr)
-    # model.train()
-    # for epoch in range(args.adapter_epochs):
-    #     for batch in train_dataset: # This needs a DataLoader for batching
-    #         # Process batch, forward pass, loss, backward pass, optimizer step
-    #         pass
-    return model
+from runner.train import freeze_model_except_adapters, train_model_with_adapter
 
 # --- Helper Functions (adapted from evaluation.py) ---
 

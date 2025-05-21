@@ -1,0 +1,6 @@
+Model: HuggingFaceH4/mistral-7b-sft-beta (original)
+Dataset: evaluator/benchmark_datasets/mtbench101.jsonl
+Evaluator: GenericLLMEvaluator
+Judge Model: gpt-4
+Evaluation Split Size: 2
+Final Score: 2.0

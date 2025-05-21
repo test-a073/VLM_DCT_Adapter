@@ -5,19 +5,16 @@ import yaml
 import logging
 import re
 from typing import Dict, Any, List, Optional
-
 import torch
 from datasets import load_dataset, Dataset, DatasetDict
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
 
-# Assuming evaluator scripts are in a subdirectory or accessible in PYTHONPATH
-# If they are in 'evaluator' subdirectory:
 from evaluator.generic_evaluator import GenericLLMEvaluator
-# from evaluator.cascade_evaluator import CascadeEvaluator # If needed
+
 
 # Import for Adapter
-from adapter.mistral_adapter import DCTAdapter # Assuming DCTAdapter is in adapter/my_adapter.py
+from adapter.mistral_adapter import DCTAdapter 
 from runner.train import train_model, freeze_model_except_adapters
 
 try:
@@ -48,16 +45,12 @@ def get_parent_module(model: torch.nn.Module, name: str) -> torch.nn.Module:
 def inject_adapters(
     model: torch.nn.Module,
     adapter_cls: type,
-    base_adapter_args: dict, # Renamed from adapter_args for clarity
+    base_adapter_args: dict, 
     layers_config: List[Dict[str, str]] # Expected format: [{'name': 'layer_name_pattern_to_match'}]
 ) -> torch.nn.Module:
     logger.info(f"Starting adapter injection with {adapter_cls.__name__}...")
     for name, module in model.named_modules(): # Iterate over all module names in the model
         for layer_conf in layers_config:
-            # Check if the current module's name matches the configuration name
-            # The original code used 'in', which allows pattern matching.
-            # If exact names are always provided in layer_conf, '==' could be used.
-            # Sticking to 'in' to maintain original flexibility if patterns are used.
             if layer_conf['name'] in name:
                 # Ensure we are matching the exact module intended, not a submodule containing the name
                 # This check assumes layer_conf['name'] is the full name of the target module
@@ -85,38 +78,7 @@ def inject_adapters(
                         logger.error(f"Failed to inject adapter into {name}: {e}", exc_info=True)
     return model
 
-# --- Placeholder for functions from runner.train (implement or import them) ---
-def freeze_model_except_adapters(model: torch.nn.Module, adapter_name_pattern: str = "dct_adapter") -> None:
-    """Placeholder: Freezes all parameters except those containing adapter_name_pattern."""
-    logger.warning(f"Placeholder: `freeze_model_except_adapters` called. Implement freezing logic.")
-    # Example (needs refinement based on actual adapter naming):
-    # for name, param in model.named_parameters():
-    #     if adapter_name_pattern not in name:
-    #         param.requires_grad = False
-    #     else:
-    #         param.requires_grad = True
-    #         logger.info(f"Adapter parameter {name} remains trainable.")
-    pass
-
-def train_model_with_adapter(
-    model: torch.nn.Module,
-    tokenizer: AutoTokenizer,
-    train_dataset: Dataset,
-    args: argparse.Namespace # For training specific args like epochs, lr
-) -> torch.nn.Module:
-    """Placeholder: Trains the model with the injected adapter."""
-    logger.warning(f"Placeholder: `train_model_with_adapter` called with {len(train_dataset)} samples. Implement training logic.")
-    # Example training loop structure:
-    # optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.adapter_lr)
-    # model.train()
-    # for epoch in range(args.adapter_epochs):
-    #     for batch in train_dataset: # This needs a DataLoader for batching
-    #         # Process batch, forward pass, loss, backward pass, optimizer step
-    #         pass
-    return model
-
 # --- Helper Functions (adapted from evaluation.py) ---
-
 def load_openai_config(config_path: str) -> dict:
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
@@ -360,11 +322,13 @@ def run_evaluation_pipeline(
 # --- Main Script Logic ---
 
 def main():
+
+    model_id = "HuggingFaceH4/mistral-7b-sft-beta"
     parser = argparse.ArgumentParser(description="Evaluate original and adapted Mistral models.")
-    parser.add_argument("--model_name_or_path", type=str, default="HuggingFaceH4/mistral-7b-sft-beta", help="Path to the base Mistral model.")
+    parser.add_argument("--model_name_or_path", type=str, default=model_id, help="Path to the base Mistral model.")
     parser.add_argument("--dataset_path", type=str, default="evaluator/benchmark_datasets/mtbench101.jsonl", help="Path to the benchmark dataset (JSONL format).")
-    parser.add_argument("--num_train_samples", type=int, default=50, help="Number of samples for training/adaptation.")
-    parser.add_argument("--num_eval_samples", type=int, default=50, help="Number of samples for evaluation.")
+    parser.add_argument("--num_train_samples", type=int, default=2, help="Number of samples for training/adaptation.")
+    parser.add_argument("--num_eval_samples", type=int, default=2, help="Number of samples for evaluation.")
     parser.add_argument("--max_new_tokens", type=int, default=512, help="Max new tokens for generation.")
     parser.add_argument("--eval_output_dir", type=str, default="./eval_results_injection", help="Directory for all outputs.")
     parser.add_argument("--openai_config_path", type=str, default="evaluator/openai_config.yaml", help="Path to OpenAI config.")
@@ -412,8 +376,6 @@ def main():
         eval_list = full_dataset_list[args.num_train_samples : args.num_train_samples + args.num_eval_samples]
 
         # Convert to Hugging Face Dataset objects
-        # Need to ensure the lists of dicts are correctly formatted for Dataset.from_list
-        # Assuming each item in train_list/eval_list is a dict compatible with Dataset.from_list
         train_dataset = Dataset.from_list(train_list)
         eval_dataset = Dataset.from_list(eval_list)
         
@@ -483,9 +445,6 @@ def main():
             except Exception as e:
                 print(e)
             
-
-            
-            
             if args.perform_adapter_training:
                 if train_dataset is None or len(train_dataset) == 0:
                     logger.warning("Adapter training requested, but train_dataset is empty or None. Skipping training.")
@@ -500,9 +459,7 @@ def main():
                 logger.info("Adapter training not requested (perform_adapter_training=False).")
         else:
             logger.info("Adapter injection not requested (do_adapter_injection=False). Evaluating base model as 'adapted' model.")
-            # adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-            # model_for_adapted_eval_name = f"{args.model_name_or_path}_base_as_adapted" 
-
+        
         if adapted_model: 
             print("Evaluation of adapted model--------------------")
             run_evaluation_pipeline(
@@ -524,6 +481,7 @@ def main():
         logger.error(f"Error during adapted model setup or evaluation: {e}", exc_info=True)
 
     logger.info("--- Main Mistral Injection Script Finished ---")
+
 
 if __name__ == "__main__":
     main()
