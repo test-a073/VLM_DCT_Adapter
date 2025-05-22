@@ -2,25 +2,27 @@ import argparse
 import json
 import os
 import yaml
-import logging
 import re
 from typing import Dict, Any, List, Optional
+
 import torch
 from datasets import load_dataset, Dataset, DatasetDict
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
 
+# Assuming evaluator scripts are in a subdirectory or accessible in PYTHONPATH
+# If they are in 'evaluator' subdirectory:
 from evaluator.generic_evaluator import GenericLLMEvaluator
-
+# from evaluator.cascade_evaluator import CascadeEvaluator # If needed
 
 # Import for Adapter
-from adapter.mistral_adapter import DCTAdapter 
+from adapter.mistral_adapter import DCTAdapter # Assuming DCTAdapter is in adapter/my_adapter.py
 from runner.train import train_model, freeze_model_except_adapters
 
 try:
     from mmengine.config import ConfigDict
 except ImportError:
-    logging.warning("mmengine.config.ConfigDict not found. Using a basic dict wrapper.")
+    print("mmengine.config.ConfigDict not found. Using a basic dict wrapper.")
     class ConfigDict(dict):
         def __getattr__(self, name):
             try:
@@ -31,8 +33,8 @@ except ImportError:
             self[name] = value
 
 # Setup basic logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# logger = logging.getLogger(__name__)
 
 # --- Adapter Helper Functions (from main_chartQA.py) ---
 def get_parent_module(model: torch.nn.Module, name: str) -> torch.nn.Module:
@@ -45,17 +47,21 @@ def get_parent_module(model: torch.nn.Module, name: str) -> torch.nn.Module:
 def inject_adapters(
     model: torch.nn.Module,
     adapter_cls: type,
-    base_adapter_args: dict, 
+    base_adapter_args: dict, # Renamed from adapter_args for clarity
     layers_config: List[Dict[str, str]] # Expected format: [{'name': 'layer_name_pattern_to_match'}]
 ) -> torch.nn.Module:
-    logger.info(f"Starting adapter injection with {adapter_cls.__name__}...")
+    print(f"Starting adapter injection with {adapter_cls.__name__}...")
     for name, module in model.named_modules(): # Iterate over all module names in the model
         for layer_conf in layers_config:
+            # Check if the current module's name matches the configuration name
+            # The original code used 'in', which allows pattern matching.
+            # If exact names are always provided in layer_conf, '==' could be used.
+            # Sticking to 'in' to maintain original flexibility if patterns are used.
             if layer_conf['name'] in name:
                 # Ensure we are matching the exact module intended, not a submodule containing the name
                 # This check assumes layer_conf['name'] is the full name of the target module
                 if name == layer_conf['name']:
-                    logger.info(f"Matched target layer for injection: {name}")
+                    print(f"Matched target layer for injection: {name}")
                     try:
                         parent = get_parent_module(model, name)
                         original_module = getattr(parent, name.split('.')[-1])
@@ -64,26 +70,30 @@ def inject_adapters(
 
                         if hasattr(original_module, 'out_features') and isinstance(getattr(original_module, 'out_features'), int):
                             actual_in_features = original_module.out_features
-                            logger.info(f"Dynamically setting adapter 'in_features' for {name} to {actual_in_features} (derived from original_module.out_features).")
+                            print(f"Dynamically setting adapter 'in_features' for {name} to {actual_in_features} (derived from original_module.out_features).")
                             current_adapter_args['in_features'] = actual_in_features
                         else:
-                            logger.warning(f"Original module {name} (type: {type(original_module)}) does not have an integer 'out_features' attribute. "
+                            print(f"Original module {name} (type: {type(original_module)}) does not have an integer 'out_features' attribute. "
                                            f"Using 'in_features' from base_adapter_args: {current_adapter_args.get('in_features')}. "
                                            f"This might lead to errors if incorrect for this layer.")
 
                         adapter_instance = adapter_cls(**current_adapter_args)
                         setattr(parent, name.split('.')[-1], torch.nn.Sequential(original_module, adapter_instance))
-                        logger.info(f"Successfully injected adapter after {name} with args: {current_adapter_args}")
+                        print(f"Successfully injected adapter after {name} with args: {current_adapter_args}")
                     except Exception as e:
-                        logger.error(f"Failed to inject adapter into {name}: {e}", exc_info=True)
+                        print(f"Failed to inject adapter into {name}: {e}") # Consider adding exc_info=True if Traceback is needed
     return model
 
+# --- Placeholder for functions from runner.train (implement or import them) ---
+from runner.train import freeze_model_except_adapters, train_model
+
 # --- Helper Functions (adapted from evaluation.py) ---
+
 def load_openai_config(config_path: str) -> dict:
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
-    logger.warning(f"OpenAI config file not found at {config_path}")
+    print(f"OpenAI config file not found at {config_path}")
     return {}
 
 def simple_text_summarizer_postprocessor(judge_response_text: str) -> Dict[str, Any]:
@@ -105,7 +115,7 @@ def simple_text_summarizer_postprocessor(judge_response_text: str) -> Dict[str, 
                     score = float(score_str)
                     break
                 except ValueError:
-                    logger.warning(f"Found score-like text \"{score_str}\" with keyword but failed to parse as float.")
+                    print(f"Found score-like text \"{score_str}\" with keyword but failed to parse as float.")
                     pass
         if score is not None:
             break
@@ -141,7 +151,7 @@ def generate_predictions(
     device: str,
     max_new_tokens: int = 512
 ) -> List[Dict[str, Any]]:
-    logger.info(f"Generating predictions for {len(dataset_split)} samples...")
+    print(f"Generating predictions for {len(dataset_split)} samples...")
     predictions_data = []
     for example in tqdm(dataset_split, desc="Generating Predictions"):
         conv_id = example.get("id", "unknown_id")
@@ -151,7 +161,7 @@ def generate_predictions(
         if not history or not isinstance(history, list) or not history[-1].get("user"):
             current_prompt_text = example.get("query", "") # Fallback if history is not as expected
             if not current_prompt_text:
-                 logger.warning(f"Skipping item {conv_id} due to missing user prompt in history or query field.")
+                 print(f"Skipping item {conv_id} due to missing user prompt in history or query field.")
                  predictions_data.append({
                     "id": conv_id, "task_category": example.get("task_category", "N/A"),
                     "model_input": "Error: Missing prompt", "prediction": "Error: Missing prompt",
@@ -193,7 +203,7 @@ def generate_predictions(
                 "full_history": history
             })
         except Exception as e:
-            logger.warning(f"Error generating prediction for ID {conv_id}: {e}")
+            print(f"Error generating prediction for ID {conv_id}: {e}")
             predictions_data.append({
                 "id": conv_id, "task_category": example.get("task_category", "N/A"),
                 "model_input": model_input_text, "prediction": f"Error: {e}",
@@ -222,7 +232,7 @@ def run_evaluation_pipeline(
     with open(predictions_output_filepath, 'w') as f:
         for item in generated_preds_list:
             f.write(json.dumps(item) + '\n')
-    logger.info(f"Predictions for {output_suffix} saved to {predictions_output_filepath}")
+    print(f"Predictions for {output_suffix} saved to {predictions_output_filepath}")
 
     # 2. Prepare dataset for evaluator
     dataset_for_eval_dict = {
@@ -242,11 +252,11 @@ def run_evaluation_pipeline(
             valid_predictions_count += 1
     
     if valid_predictions_count == 0:
-        logger.warning(f"No successful predictions to evaluate for {output_suffix}. Skipping evaluation.")
+        print(f"No successful predictions to evaluate for {output_suffix}. Skipping evaluation.")
         final_score_value = "N/A (No valid predictions)"
     else:
         eval_hf_dataset = Dataset.from_dict(dataset_for_eval_dict)
-        logger.info(f"Prepared {len(eval_hf_dataset)} samples for the evaluator for {output_suffix}.")
+        print(f"Prepared {len(eval_hf_dataset)} samples for the evaluator for {output_suffix}.")
 
         # 3. Configure and Run Evaluator
         openai_params = load_openai_config(args.openai_config_path)
@@ -280,24 +290,24 @@ def run_evaluation_pipeline(
             output_path=evaluator_output_path
         )
 
-        logger.info(f"Running evaluation with {args.evaluator_type} for {output_suffix}...")
+        print(f"Running evaluation with {args.evaluator_type} for {output_suffix}...")
         evaluation_results = evaluator.score(
             predictions=list(eval_hf_dataset["prediction"]),
             test_set=eval_hf_dataset
         )
-        logger.info(f"Raw Evaluation Results for {output_suffix}:")
+        print(f"Raw Evaluation Results for {output_suffix}:")
         try:
-            logger.info(json.dumps(evaluation_results, indent=4))
+            print(json.dumps(evaluation_results, indent=4))
         except TypeError:
-            logger.info(str(evaluation_results))
+            print(str(evaluation_results))
 
         final_score_value = "N/A"
         if isinstance(evaluation_results, dict) and "average_score" in evaluation_results:
             final_score_value = evaluation_results["average_score"]
             num_scored = evaluation_results.get('num_scored', 'N/A')
-            logger.info(f"Average Judge Score for {output_suffix}: {final_score_value:.2f} (Scored items: {num_scored})")
+            print(f"Average Judge Score for {output_suffix}: {final_score_value:.2f} (Scored items: {num_scored})")
         else:
-            logger.warning(f"Could not determine average_score from evaluation results for {output_suffix}.")
+            print(f"Could not determine average_score from evaluation results for {output_suffix}.")
 
 
     # 4. Save Score File
@@ -311,9 +321,9 @@ def run_evaluation_pipeline(
             f.write(f"Judge Model: {args.judge_model_name}\n")
             f.write(f"Evaluation Split Size: {len(eval_dataset) if eval_dataset is not None else 'N/A'}\n")
             f.write(f"Final Score: {final_score_value}\n")
-        logger.info(f"Evaluation score for {output_suffix} saved to {score_file_path}")
+        print(f"Evaluation score for {output_suffix} saved to {score_file_path}")
     except Exception as e:
-        logger.error(f"Failed to write score to file {score_file_path}: {e}", exc_info=True)
+        print(f"Failed to write score to file {score_file_path}: {e}") # Consider adding exc_info=True if Traceback is needed
     
     if isinstance(final_score_value, (float, int)):
         return float(final_score_value)
@@ -322,13 +332,11 @@ def run_evaluation_pipeline(
 # --- Main Script Logic ---
 
 def main():
-
-    model_id = "HuggingFaceH4/mistral-7b-sft-beta"
     parser = argparse.ArgumentParser(description="Evaluate original and adapted Mistral models.")
-    parser.add_argument("--model_name_or_path", type=str, default=model_id, help="Path to the base Mistral model.")
+    parser.add_argument("--model_name_or_path", type=str, default="mistralai/Mistral-7B-Instruct-v0.2", help="Path to the base Mistral model.")
     parser.add_argument("--dataset_path", type=str, default="evaluator/benchmark_datasets/mtbench101.jsonl", help="Path to the benchmark dataset (JSONL format).")
-    parser.add_argument("--num_train_samples", type=int, default=2, help="Number of samples for training/adaptation.")
-    parser.add_argument("--num_eval_samples", type=int, default=2, help="Number of samples for evaluation.")
+    parser.add_argument("--num_train_samples", type=int, default=50, help="Number of samples for training/adaptation.")
+    parser.add_argument("--num_eval_samples", type=int, default=50, help="Number of samples for evaluation.")
     parser.add_argument("--max_new_tokens", type=int, default=512, help="Max new tokens for generation.")
     parser.add_argument("--eval_output_dir", type=str, default="./eval_results_injection", help="Directory for all outputs.")
     parser.add_argument("--openai_config_path", type=str, default="evaluator/openai_config.yaml", help="Path to OpenAI config.")
@@ -358,7 +366,7 @@ def main():
         config = yaml.safe_load(f)
 
     # 1. Load and Split Dataset
-    logger.info(f"Loading dataset from {args.dataset_path}...")
+    print(f"Loading dataset from {args.dataset_path}...")
     try:
         # Load the full dataset
         full_dataset_list = []
@@ -367,7 +375,7 @@ def main():
                 full_dataset_list.append(json.loads(line))
         
         if len(full_dataset_list) < args.num_train_samples + args.num_eval_samples:
-            logger.error(f"Dataset has {len(full_dataset_list)} samples, but "
+            print(f"Dataset has {len(full_dataset_list)} samples, but "
                          f"{args.num_train_samples + args.num_eval_samples} are required for train+eval. Aborting.")
             return
 
@@ -376,13 +384,15 @@ def main():
         eval_list = full_dataset_list[args.num_train_samples : args.num_train_samples + args.num_eval_samples]
 
         # Convert to Hugging Face Dataset objects
+        # Need to ensure the lists of dicts are correctly formatted for Dataset.from_list
+        # Assuming each item in train_list/eval_list is a dict compatible with Dataset.from_list
         train_dataset = Dataset.from_list(train_list)
         eval_dataset = Dataset.from_list(eval_list)
         
-        logger.info(f"Dataset loaded. Training samples: {len(train_dataset)}, Evaluation samples: {len(eval_dataset)}")
+        print(f"Dataset loaded. Training samples: {len(train_dataset)}, Evaluation samples: {len(eval_dataset)}")
 
     except Exception as e:
-        logger.error(f"Error loading or splitting dataset: {e}", exc_info=True)
+        print(f"Error loading or splitting dataset: {e}") # Consider adding exc_info=True if Traceback is needed
         return
 
     # 2. Load Tokenizer (shared for both models)
@@ -390,13 +400,13 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token # Set pad token if not present
-            logger.info(f"Tokenizer pad_token was None, set to eos_token: {tokenizer.eos_token}")
+            print(f"Tokenizer pad_token was None, set to eos_token: {tokenizer.eos_token}")
     except Exception as e:
-        logger.error(f"Failed to load tokenizer for {args.model_name_or_path}: {e}", exc_info=True)
+        print(f"Failed to load tokenizer for {args.model_name_or_path}: {e}") # Consider adding exc_info=True if Traceback is needed
         return
         
     # --- Evaluate Original Model ---
-    logger.info(f"--- Starting Evaluation for Original Model: {args.model_name_or_path} ---")
+    print(f"--- Starting Evaluation for Original Model: {args.model_name_or_path} ---")
     try:
         original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
         run_evaluation_pipeline(
@@ -411,18 +421,18 @@ def main():
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     except Exception as e:
-        logger.error(f"Error during original model evaluation: {e}", exc_info=True)
+        print(f"Error during original model evaluation: {e}") # Consider adding exc_info=True if Traceback is needed
 
 
     # --- Adapter Injection and Evaluation for Adapted Model ---
-    logger.info(f"--- Starting Evaluation for Adapted Model: {args.model_name_or_path} + Adapter ---")
+    print(f"--- Starting Evaluation for Adapted Model: {args.model_name_or_path} + Adapter ---")
     adapted_model = None 
     model_for_adapted_eval_name = args.model_name_or_path 
     # Default to base model name
     args.do_adapter_injection = True
     try:
         if args.do_adapter_injection:
-            logger.info(f"Loading base model ({args.model_name_or_path}) for adapter injection...")
+            print(f"Loading base model ({args.model_name_or_path}) for adapter injection...")
             adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
             model_for_adapted_eval_name = f"{args.model_name_or_path}_adapted"
 
@@ -430,14 +440,14 @@ def main():
             try:
                 with open(model_arch_path, 'w') as f:
                     f.write(str(adapted_model))
-                logger.info(f"Model architecture written to {model_arch_path}")
+                print(f"Model architecture written to {model_arch_path}")
             except Exception as e:
-                logger.error(f"Failed to write model architecture: {e}")
+                print(f"Failed to write model architecture: {e}")
 
             print("Hello")
             try: 
                 adapted_model = inject_adapters(adapted_model, DCTAdapter, config['adapter']['params'], config['adapter']['layers'])
-                logger.info("Adapter injection process finished.")
+                print("Adapter injection process finished.")
                 freeze_model_except_adapters(adapted_model)
                 print("ADAPTER MODEL ARCHITECTURE")
                 print(adapted_model)
@@ -445,21 +455,26 @@ def main():
             except Exception as e:
                 print(e)
             
+
+            
+            
             if args.perform_adapter_training:
                 if train_dataset is None or len(train_dataset) == 0:
-                    logger.warning("Adapter training requested, but train_dataset is empty or None. Skipping training.")
+                    print("Adapter training requested, but train_dataset is empty or None. Skipping training.")
                 else:
-                    logger.info(f"Performing adapter training using {len(train_dataset)} samples...")
+                    print(f"Performing adapter training using {len(train_dataset)} samples...")
                     # Ensure model is on the correct device for training
                     device = "cuda" if torch.cuda.is_available() else "cpu"
                     adapted_model.to(device)
                     adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset, args) # Placeholder call
-                    logger.info("Adapter training finished.")
+                    print("Adapter training finished.")
             else:
-                logger.info("Adapter training not requested (perform_adapter_training=False).")
+                print("Adapter training not requested (perform_adapter_training=False).")
         else:
-            logger.info("Adapter injection not requested (do_adapter_injection=False). Evaluating base model as 'adapted' model.")
-        
+            print("Adapter injection not requested (do_adapter_injection=False). Evaluating base model as 'adapted' model.")
+            # adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+            # model_for_adapted_eval_name = f"{args.model_name_or_path}_base_as_adapted" 
+
         if adapted_model: 
             print("Evaluation of adapted model--------------------")
             run_evaluation_pipeline(
@@ -471,17 +486,16 @@ def main():
                 output_suffix="adapted" 
             )
         else:
-            logger.error("Adapted model was not loaded or created. Skipping evaluation for adapted model.")
+            print("Adapted model was not loaded or created. Skipping evaluation for adapted model.")
 
         del adapted_model 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     except Exception as e:
-        logger.error(f"Error during adapted model setup or evaluation: {e}", exc_info=True)
+        print(f"Error during adapted model setup or evaluation: {e}") # Consider adding exc_info=True if Traceback is needed
 
-    logger.info("--- Main Mistral Injection Script Finished ---")
-
+    print("--- Main Mistral Injection Script Finished ---")
 
 if __name__ == "__main__":
     main()

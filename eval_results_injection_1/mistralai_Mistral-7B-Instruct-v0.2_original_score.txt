@@ -1,6 +1,0 @@
-Model: mistralai/Mistral-7B-Instruct-v0.2 (original)
-Dataset: evaluator/benchmark_datasets/mtbench101.jsonl
-Evaluator: GenericLLMEvaluator
-Judge Model: gpt-4
-Evaluation Split Size: 50
-Final Score: 6.34
