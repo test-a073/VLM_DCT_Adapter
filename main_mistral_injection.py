@@ -18,7 +18,7 @@ from evaluator.generic_evaluator import GenericLLMEvaluator
 
 # Import for Adapter
 from adapter.mistral_adapter import DCTAdapter # Assuming DCTAdapter is in adapter/my_adapter.py
-from runner.train import train_model, freeze_model_except_adapters
+from runner.train import train_model, freeze_model_except_adapters, train_model_mistral
 
 try:
     from mmengine.config import ConfigDict
@@ -85,8 +85,7 @@ def inject_adapters(
                         logger.error(f"Failed to inject adapter into {name}: {e}", exc_info=True)
     return model
 
-# --- Placeholder for functions from runner.train (implement or import them) ---
-from runner.train import freeze_model_except_adapters, train_model_with_adapter
+
 
 # --- Helper Functions (adapted from evaluation.py) ---
 
@@ -317,7 +316,8 @@ def run_evaluation_pipeline(
     try:
         with open(score_file_path, 'w') as f:
             f.write(f"Model: {model_name_or_path} ({output_suffix})\n")
-            f.write(f"Dataset: {args.dataset_path}\n")
+            f.write(f"Training Dataset: {args.train_dataset_path}\n")
+            f.write(f"Evaluation Dataset: {args.eval_dataset_path}\n")
             f.write(f"Evaluator: {args.evaluator_type}\n")
             f.write(f"Judge Model: {args.judge_model_name}\n")
             f.write(f"Evaluation Split Size: {len(eval_dataset) if eval_dataset is not None else 'N/A'}\n")
@@ -335,9 +335,10 @@ def run_evaluation_pipeline(
 def main():
     parser = argparse.ArgumentParser(description="Evaluate original and adapted Mistral models.")
     parser.add_argument("--model_name_or_path", type=str, default="mistralai/Mistral-7B-Instruct-v0.2", help="Path to the base Mistral model.")
-    parser.add_argument("--dataset_path", type=str, default="evaluator/benchmark_datasets/mtbench101.jsonl", help="Path to the benchmark dataset (JSONL format).")
-    parser.add_argument("--num_train_samples", type=int, default=50, help="Number of samples for training/adaptation.")
-    parser.add_argument("--num_eval_samples", type=int, default=50, help="Number of samples for evaluation.")
+    parser.add_argument("--train_dataset_path", type=str, default="evaluator/benchmark_datasets/new_datasamples.jsonl", help="Path to the training dataset (JSONL format).")
+    parser.add_argument("--eval_dataset_path", type=str, default="evaluator/benchmark_datasets/mtbench101_original.jsonl", help="Path to the evaluation dataset (JSONL format).")
+    parser.add_argument("--num_train_samples", type=int, default=-1, help="Number of samples for training/adaptation. -1 to use all.")
+    parser.add_argument("--num_eval_samples", type=int, default=-1, help="Number of samples for evaluation. -1 to use all.")
     parser.add_argument("--max_new_tokens", type=int, default=512, help="Max new tokens for generation.")
     parser.add_argument("--eval_output_dir", type=str, default="./eval_results_injection", help="Directory for all outputs.")
     parser.add_argument("--openai_config_path", type=str, default="evaluator/openai_config.yaml", help="Path to OpenAI config.")
@@ -359,6 +360,9 @@ def main():
     parser.add_argument("--adapter_lr", type=float, default=1e-4, help="Learning rate for adapter training.")
     parser.add_argument("--adapter_epochs", type=int, default=1, help="Number of epochs for adapter training.")
 
+    # New argument for full fine-tuning
+    parser.add_argument("--perform_full_finetune", action='store_true', help="Enable full fine-tuning of the original model.")
+
     args = parser.parse_args()
 
     os.makedirs(args.eval_output_dir, exist_ok=True)
@@ -366,34 +370,40 @@ def main():
     with open("config/config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    # 1. Load and Split Dataset
-    logger.info(f"Loading dataset from {args.dataset_path}...")
+    # Load and prepare train_dataset
+    logger.info(f"Loading training dataset from {args.train_dataset_path}...")
     try:
-        # Load the full dataset
-        full_dataset_list = []
-        with open(args.dataset_path, 'r') as f:
+        train_dataset_list = []
+        with open(args.train_dataset_path, 'r') as f:
             for line in f:
-                full_dataset_list.append(json.loads(line))
+                train_dataset_list.append(json.loads(line))
         
-        if len(full_dataset_list) < args.num_train_samples + args.num_eval_samples:
-            logger.error(f"Dataset has {len(full_dataset_list)} samples, but "
-                         f"{args.num_train_samples + args.num_eval_samples} are required for train+eval. Aborting.")
-            return
-
-        # Split dataset
-        train_list = full_dataset_list[:args.num_train_samples]
-        eval_list = full_dataset_list[args.num_train_samples : args.num_train_samples + args.num_eval_samples]
-
-        # Convert to Hugging Face Dataset objects
-        # Need to ensure the lists of dicts are correctly formatted for Dataset.from_list
-        # Assuming each item in train_list/eval_list is a dict compatible with Dataset.from_list
-        train_dataset = Dataset.from_list(train_list)
-        eval_dataset = Dataset.from_list(eval_list)
+        if args.num_train_samples != -1 and args.num_train_samples < len(train_dataset_list):
+            train_dataset_list = train_dataset_list[:args.num_train_samples]
         
-        logger.info(f"Dataset loaded. Training samples: {len(train_dataset)}, Evaluation samples: {len(eval_dataset)}")
+        train_dataset = Dataset.from_list(train_dataset_list)
+        logger.info(f"Training dataset loaded. Samples: {len(train_dataset)}")
 
     except Exception as e:
-        logger.error(f"Error loading or splitting dataset: {e}", exc_info=True)
+        logger.error(f"Error loading training dataset: {e}", exc_info=True)
+        return
+
+    # Load and prepare eval_dataset
+    logger.info(f"Loading evaluation dataset from {args.eval_dataset_path}...")
+    try:
+        eval_dataset_list = []
+        with open(args.eval_dataset_path, 'r') as f:
+            for line in f:
+                eval_dataset_list.append(json.loads(line))
+
+        if args.num_eval_samples != -1 and args.num_eval_samples < len(eval_dataset_list):
+            eval_dataset_list = eval_dataset_list[:args.num_eval_samples]
+
+        eval_dataset = Dataset.from_list(eval_dataset_list)
+        logger.info(f"Evaluation dataset loaded. Samples: {len(eval_dataset)}")
+
+    except Exception as e:
+        logger.error(f"Error loading evaluation dataset: {e}", exc_info=True)
         return
 
     # 2. Load Tokenizer (shared for both models)
@@ -406,37 +416,44 @@ def main():
         logger.error(f"Failed to load tokenizer for {args.model_name_or_path}: {e}", exc_info=True)
         return
         
-    # --- Evaluate Original Model ---
-    logger.info(f"--- Starting Evaluation for Original Model: {args.model_name_or_path} ---")
-    try:
+    # --- Full Fine-tuning of Original Model ---
+    if args.perform_full_finetune:
+        logger.info("Performing full fine-tuning of the original model...")
         original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-        run_evaluation_pipeline(
-            model_name_or_path=args.model_name_or_path,
-            model_to_evaluate=original_model,
-            tokenizer=tokenizer,
-            eval_dataset=eval_dataset,
-            args=args,
-            output_suffix="original"
-        )
-        del original_model # Free memory
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception as e:
-        logger.error(f"Error during original model evaluation: {e}", exc_info=True)
+        # Use your existing train_model function for full fine-tuning
+        original_model = train_model_mistral(original_model, tokenizer, train_dataset, args)
+        # Save the fine-tuned original model
+        finetuned_original_dir = os.path.join(args.eval_output_dir, "finetuned_original_model")
+        os.makedirs(finetuned_original_dir, exist_ok=True)
+        original_model.save_pretrained(finetuned_original_dir)
+        tokenizer.save_pretrained(finetuned_original_dir)
+        logger.info(f"Full fine-tuning finished. Model saved to {finetuned_original_dir}")
+    else:
+        original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
 
+    # --- Evaluate Fine-tuned Original Model ---
+    run_evaluation_pipeline(
+        model_name_or_path=args.model_name_or_path,
+        model_to_evaluate=original_model,
+        tokenizer=tokenizer,
+        eval_dataset=eval_dataset,
+        args=args,
+        output_suffix="original"
+    )
+    del original_model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # --- Adapter Injection and Evaluation for Adapted Model ---
     logger.info(f"--- Starting Evaluation for Adapted Model: {args.model_name_or_path} + Adapter ---")
     adapted_model = None 
     model_for_adapted_eval_name = args.model_name_or_path 
-    # Default to base model name
     args.do_adapter_injection = True
     try:
         if args.do_adapter_injection:
             logger.info(f"Loading base model ({args.model_name_or_path}) for adapter injection...")
             adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
             model_for_adapted_eval_name = f"{args.model_name_or_path}_adapted"
-
             model_arch_path = os.path.join(args.eval_output_dir, "model_archi.txt")
             try:
                 with open(model_arch_path, 'w') as f:
@@ -444,7 +461,6 @@ def main():
                 logger.info(f"Model architecture written to {model_arch_path}")
             except Exception as e:
                 logger.error(f"Failed to write model architecture: {e}")
-
             print("Hello")
             try: 
                 adapted_model = inject_adapters(adapted_model, DCTAdapter, config['adapter']['params'], config['adapter']['layers'])
@@ -452,30 +468,28 @@ def main():
                 freeze_model_except_adapters(adapted_model)
                 print("ADAPTER MODEL ARCHITECTURE")
                 print(adapted_model)
-
             except Exception as e:
                 print(e)
-            
-
-            
-            
             if args.perform_adapter_training:
                 if train_dataset is None or len(train_dataset) == 0:
                     logger.warning("Adapter training requested, but train_dataset is empty or None. Skipping training.")
                 else:
                     logger.info(f"Performing adapter training using {len(train_dataset)} samples...")
-                    # Ensure model is on the correct device for training
                     device = "cuda" if torch.cuda.is_available() else "cpu"
                     adapted_model.to(device)
-                    adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset, args) # Placeholder call
+                    adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset, args)
                     logger.info("Adapter training finished.")
+                    # Save the adapter-injected model (adapter weights)
+                    finetuned_adapter_dir = os.path.join(args.eval_output_dir, "finetuned_adapter_model")
+                    os.makedirs(finetuned_adapter_dir, exist_ok=True)
+                    # Save the full model (including adapters)
+                    adapted_model.save_pretrained(finetuned_adapter_dir)
+                    tokenizer.save_pretrained(finetuned_adapter_dir)
+                    logger.info(f"Adapter-injected model saved to {finetuned_adapter_dir}")
             else:
                 logger.info("Adapter training not requested (perform_adapter_training=False).")
         else:
             logger.info("Adapter injection not requested (do_adapter_injection=False). Evaluating base model as 'adapted' model.")
-            # adapted_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-            # model_for_adapted_eval_name = f"{args.model_name_or_path}_base_as_adapted" 
-
         if adapted_model: 
             print("Evaluation of adapted model--------------------")
             run_evaluation_pipeline(
@@ -488,11 +502,9 @@ def main():
             )
         else:
             logger.error("Adapted model was not loaded or created. Skipping evaluation for adapted model.")
-
         del adapted_model 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
     except Exception as e:
         logger.error(f"Error during adapted model setup or evaluation: {e}", exc_info=True)
 
