@@ -5,6 +5,8 @@ from torch.utils.data import DataLoader
 from runner.evaluate import evaluate_model
 from tqdm import tqdm
 
+
+
 def freeze_model_except_adapters(model):
     for name, param in model.named_parameters():
         # print("Adapter? ",name)
@@ -32,107 +34,6 @@ def train_model(model, config, dataset, processor, preprocess_fn=None, batch_siz
     elif config['models'][0]['name'] == 'mistral-7b-instruct':
         train_model_mistral(model, config, dataset, processor, preprocess_fn, batch_size, epochs, device, lr)
 
-def train_model_mistral(original_model, tokenizer, train_dataset, args):
-    if isinstance(train_dataset, dict) and 'train' in train_dataset:
-        data = train_dataset['train']
-    else:
-        data = train_dataset
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    original_model.to(device)
-    original_model.train()
-
-    # Optimizer
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, original_model.parameters()), lr=args.learning_rate)
-
-    batch_size = args.per_device_train_batch_size
-    epochs = int(args.num_train_epochs)
-
-    for epoch in range(epochs):
-        total_loss = 0.0
-        # Ensure data is a list for slicing and len()
-        if not isinstance(data, list):
-            data = list(data) # Convert to list if it's a Hugging Face Dataset object for example
-
-        pbar = tqdm(range(0, len(data), batch_size), desc=f"Mistral Training Epoch {epoch+1}/{epochs}")
-        for i in pbar:
-            batch_samples = data[i:i+batch_size]
-            if not batch_samples:
-                continue
-
-            # Prepare input and label tensors
-            # Assuming the dataset format from main_mistral_injection.py context
-            # where each item is a dictionary with a "history" key.
-            try:
-                inputs_text = [s["history"][-1]["user"] for s in batch_samples]
-                labels_text = [s["history"][-1]["bot"] for s in batch_samples]
-            except (KeyError, IndexError, TypeError) as e:
-                # Handle cases where data might not be in the expected format
-                # This could happen if train_dataset is not a list of dicts as expected
-                # or if "history" or its elements are missing.
-                # For now, we'll skip such batches with a warning.
-                print(f"Warning: Skipping batch due to unexpected data format: {e}. Batch sample: {batch_samples[0] if batch_samples else 'empty'}")
-                continue
-
-
-            # Tokenize
-            # The tokenizer should handle padding and truncation.
-            # Ensure tokenizer.pad_token is set if not already.
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-
-            # For Mistral, typically the input includes both user and bot utterances for Causal LM.
-            # The labels are then shifted versions of the input_ids.
-            # However, the current structure suggests separate inputs and labels.
-            # Let's assume the task is to predict `labels_text` given `inputs_text`.
-            # For Causal LM, we often concatenate them: prompt + completion
-            # And then the labels are the input_ids, with padding/prompt tokens masked.
-
-            # Let's adapt to a common instruction-following format:
-            # input: "USER: user_query BOT:"
-            # label: "bot_response <eos>"
-            # The model then predicts the bot_response.
-            # The loss is calculated only on the bot_response part.
-
-            full_texts = [f"USER: {s['history'][-1]['user']} BOT: {s['history'][-1]['bot']}{tokenizer.eos_token}" for s in batch_samples]
-            
-            tokenized_outputs = tokenizer(
-                full_texts,
-                padding=True,
-                truncation=True,
-                return_tensors="pt"
-            )
-
-            input_ids = tokenized_outputs.input_ids.to(device)
-            attention_mask = tokenized_outputs.attention_mask.to(device)
-            labels = input_ids.clone() # Labels are initially the same as input_ids
-
-            # Mask tokens from the "USER: user_query BOT:" part for loss calculation
-            # We only want to calculate loss on the bot's response part.
-            for idx, sample in enumerate(batch_samples):
-                user_prompt_part = f"USER: {sample['history'][-1]['user']} BOT:"
-                tokenized_user_prompt = tokenizer(user_prompt_part, return_tensors="pt", add_special_tokens=False)
-                prompt_len = tokenized_user_prompt.input_ids.shape[1]
-                labels[idx, :prompt_len] = -100 # -100 is the ignore_index for CrossEntropyLoss
-
-            # Forward pass
-            outputs = original_model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels
-            )
-            loss = outputs.loss
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-            pbar.set_postfix({"Loss": f"{loss.item():.4f}", "Avg Loss": f"{total_loss/( (i//batch_size) + 1):.4f}"})
-
-        avg_epoch_loss = total_loss / (len(data) // batch_size + 1) if (len(data) // batch_size + 1) > 0 else total_loss
-        print(f"[Epoch {epoch+1}/{epochs}] Avg Loss: {avg_epoch_loss:.4f}")
-    return original_model
 
 def train_model_florence(model, config, dataset, processor, preprocess_fn=None, batch_size=8, epochs=3, device="cuda", lr=0.0001):
     loader = dataset['train']
@@ -229,3 +130,511 @@ def train_model_qwen(model, config, dataset, processor, preprocess_fn=None, batc
 
 
         print(f"[Epoch {epoch+1}] Avg Loss: {total_loss / len(loader):.4f}")
+
+# --------------
+import torch
+from torch.utils.data import DataLoader, Dataset
+from transformers import get_linear_schedule_with_warmup
+from torch.optim import AdamW
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def format_and_tokenize_dataset(dataset_hf, tokenizer, max_seq_length):
+    """
+    Formats the conversational history and tokenizes it for Mistral instruction fine-tuning.
+    Masks prompt tokens in the labels.
+
+    Args:
+        dataset_hf (datasets.Dataset): The Hugging Face dataset.
+                                       Expected to have a 'history' column.
+        tokenizer: The tokenizer.
+        max_seq_length (int): Maximum sequence length for truncation.
+
+    Returns:
+        dict: A dictionary containing 'input_ids', 'attention_mask', and 'labels'.
+    """
+    processed_examples = {'input_ids': [], 'attention_mask': [], 'labels': []}
+
+    # Determine BOS and EOS tokens from the tokenizer
+    bos = tokenizer.bos_token if tokenizer.bos_token else "<s>"
+    eos = tokenizer.eos_token if tokenizer.eos_token else "</s>"
+    inst_open = "[INST]"
+    inst_close = "[/INST]"
+
+    logger.info(f"Using BOS: '{bos}', EOS: '{eos}' for formatting.")
+
+    for item_idx, item_history in enumerate(dataset_hf['history']):
+        full_concatenated_input_ids = []
+        full_concatenated_labels = []
+
+        if not isinstance(item_history, list):
+            logger.warning(f"Item at index {item_idx} has history of type {type(item_history)}, expected list. Skipping.")
+            continue
+
+        for turn_idx, turn in enumerate(item_history):
+            if not isinstance(turn, dict) or 'user' not in turn or 'bot' not in turn:
+                logger.warning(f"Turn {turn_idx} in item {item_idx} is malformed: {turn}. Skipping turn.")
+                continue
+            
+            user_query = str(turn['user'])
+            bot_response = str(turn['bot'])
+
+            # Format for Mistral: <s>[INST] User Query [/INST] Bot Response</s>
+            # Note: A space is often added before the bot_response if not handled by tokenizer.
+            prompt_str = f"{bos}{inst_open} {user_query} {inst_close}"
+            answer_str = f" {bot_response}{eos}" # Leading space for the answer part
+
+            # Tokenize prompt and answer parts separately to correctly create labels
+            # add_special_tokens=False because we are manually adding BOS/EOS per turn segment
+            prompt_tokens = tokenizer.encode(prompt_str, add_special_tokens=False)
+            answer_tokens = tokenizer.encode(answer_str, add_special_tokens=False)
+            
+            current_turn_input_ids = prompt_tokens + answer_tokens
+            # For labels, mask the prompt part by setting tokens to -100
+            current_turn_labels = [-100] * len(prompt_tokens) + answer_tokens
+            
+            full_concatenated_input_ids.extend(current_turn_input_ids)
+            full_concatenated_labels.extend(current_turn_labels)
+
+        # Truncate if the full concatenated history exceeds max_seq_length
+        if len(full_concatenated_input_ids) > max_seq_length:
+            full_concatenated_input_ids = full_concatenated_input_ids[:max_seq_length]
+            full_concatenated_labels = full_concatenated_labels[:max_seq_length]
+        elif len(full_concatenated_input_ids) == 0: # Handle empty history cases
+            logger.warning(f"Item at index {item_idx} resulted in empty tokenized output. Skipping.")
+            continue
+            
+        # Create attention mask (1 for real tokens, 0 for padding - padding handled by collator)
+        attention_mask = [1] * len(full_concatenated_input_ids)
+
+        processed_examples['input_ids'].append(full_concatenated_input_ids)
+        processed_examples['attention_mask'].append(attention_mask)
+        processed_examples['labels'].append(full_concatenated_labels)
+        
+    return processed_examples
+
+
+class ConversationDataset(Dataset):
+    """PyTorch Dataset for conversational data."""
+    def __init__(self, tokenized_data):
+        self.input_ids = tokenized_data['input_ids']
+        self.attention_mask = tokenized_data['attention_mask']
+        self.labels = tokenized_data['labels']
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, idx):
+        return {
+            "input_ids": torch.tensor(self.input_ids[idx], dtype=torch.long),
+            "attention_mask": torch.tensor(self.attention_mask[idx], dtype=torch.long),
+            "labels": torch.tensor(self.labels[idx], dtype=torch.long)
+        }
+
+def collate_fn_conversations(batch, tokenizer):
+    """Collate function to pad batch elements to the same length."""
+    input_ids_list = [item['input_ids'] for item in batch]
+    attention_mask_list = [item['attention_mask'] for item in batch]
+    labels_list = [item['labels'] for item in batch]
+
+    # Determine max length in this batch for padding
+    max_len = max(len(ids) for ids in input_ids_list)
+    if max_len == 0: # Should not happen if empty examples are filtered
+        return None 
+
+    padded_input_ids = []
+    padded_attention_mask = []
+    padded_labels = []
+
+    pad_token_id = tokenizer.pad_token_id
+    if pad_token_id is None:
+        # Fallback if pad_token_id is not set, common to use eos_token_id
+        pad_token_id = tokenizer.eos_token_id 
+        logger.warning(f"tokenizer.pad_token_id is None. Using eos_token_id ({pad_token_id}) for padding.")
+        if pad_token_id is None: # Critical error if no pad token can be determined
+             raise ValueError("Tokenizer has no pad_token_id and no eos_token_id to use as fallback for padding.")
+
+
+    for i in range(len(batch)):
+        input_ids = input_ids_list[i]
+        attention_mask = attention_mask_list[i]
+        labels = labels_list[i]
+        
+        padding_length = max_len - len(input_ids)
+        
+        # Pad right
+        padded_input_ids.append(torch.cat([input_ids, torch.full((padding_length,), pad_token_id, dtype=torch.long)]))
+        padded_attention_mask.append(torch.cat([attention_mask, torch.full((padding_length,), 0, dtype=torch.long)])) # Pad attention mask with 0
+        padded_labels.append(torch.cat([labels, torch.full((padding_length,), -100, dtype=torch.long)])) # Pad labels with -100 (ignore index)
+
+    return {
+        "input_ids": torch.stack(padded_input_ids),
+        "attention_mask": torch.stack(padded_attention_mask),
+        "labels": torch.stack(padded_labels)
+    }
+
+import time
+
+def train_model_mistral(original_model, tokenizer, train_dataset_hf, args):
+    """
+    Trains a Mistral model using the provided dataset and arguments.
+
+    Args:
+        original_model: The pre-trained Mistral model (e.g., from AutoModelForCausalLM.from_pretrained).
+        tokenizer: The tokenizer for the model (e.g., from AutoTokenizer.from_pretrained).
+        train_dataset_hf (datasets.Dataset): The Hugging Face training dataset.
+                                            Must contain a 'history' column, where each item is a list of turns,
+                                            and each turn is a dict {'user': str, 'bot': str}.
+        args: An object or Namespace containing training arguments:
+              - num_epochs (int): Number of training epochs.
+              - model_save_path (str): Path to save the fine-tuned model and tokenizer.
+              - learning_rate (float): Optimizer learning rate (e.g., 2e-5, 5e-5).
+              - batch_size (int): Training batch size (e.g., 1, 2, 4, adjust based on GPU memory).
+              - max_seq_length (int): Maximum sequence length for tokenization and padding (e.g., 512, 1024, 2048).
+              - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients before an optimizer update. Defaults to 1.
+              - warmup_steps (int, optional): Number of warmup steps for the learning rate scheduler. Defaults to 0.
+              - logging_steps (int, optional): Log training loss every X steps. Defaults to 10.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
+    
+    original_model.to(device)
+    original_model.train() # Set model to training mode
+
+    # Ensure tokenizer has a pad token. This is crucial for batching.
+    if tokenizer.pad_token is None:
+        logger.warning("Tokenizer does not have a pad_token. Setting pad_token to eos_token.")
+        tokenizer.pad_token = tokenizer.eos_token
+        # Important: If you add a new token or change pad_token such that vocab size changes,
+        # you might need to resize model token embeddings:
+        # original_model.resize_token_embeddings(len(tokenizer))
+        # However, just setting pad_token = eos_token usually means using an existing token.
+    if tokenizer.pad_token_id is None: # Ensure pad_token_id is also set
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    logger.info(f"Tokenizer pad token ID: {tokenizer.pad_token_id}")
+
+
+    # 1. Preprocess and tokenize the dataset
+    logger.info("Preprocessing and tokenizing dataset...")
+    tokenized_data_dict = format_and_tokenize_dataset(train_dataset_hf, tokenizer, args.max_seq_length)
+    
+    if not tokenized_data_dict['input_ids']:
+        logger.error("Tokenization resulted in an empty dataset. Please check your data and formatting.")
+        return None
+
+    # Create a PyTorch Dataset
+    pytorch_train_dataset = ConversationDataset(tokenized_data_dict)
+    logger.info(f"Created PyTorch Dataset with {len(pytorch_train_dataset)} examples.")
+
+
+    # 2. Create DataLoader
+    logger.info(f"Creating DataLoader with batch size: {args.batch_size}...")
+    train_dataloader = DataLoader(
+        pytorch_train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=lambda batch: collate_fn_conversations(batch, tokenizer)
+    )
+
+    # 3. Set up Optimizer and Scheduler
+    logger.info(f"Setting up optimizer with learning rate: {args.learning_rate}...")
+
+    # Freeze all parameters
+    for name, param in original_model.named_parameters():
+        param.requires_grad = False
+
+    # Unfreeze only adapter layers based on name match
+    adapter_layer_prefixes = [layer['name'] for layer in args.adapter_layers_json]
+
+    for name, param in original_model.named_parameters():
+        for prefix in adapter_layer_prefixes:
+            if name.startswith(prefix):
+                param.requires_grad = True
+                
+                break
+
+    print("trainable layers: ")
+    # Print layers which require gradients (i.e., will be updated during training)
+    for name, param in original_model.named_parameters():
+        if param.requires_grad:
+            print(name)
+
+
+    # Only pass trainable parameters to the optimizer
+    optimizer = AdamW(filter(lambda p: p.requires_grad, original_model.parameters()), lr=args.learning_rate, eps=1e-8) # Added eps for stability
+
+    gradient_accumulation_steps = getattr(args, 'gradient_accumulation_steps', 1)
+    num_training_steps_per_epoch = len(train_dataloader) // gradient_accumulation_steps
+    if len(train_dataloader) % gradient_accumulation_steps != 0:
+        num_training_steps_per_epoch +=1 # account for the last partial step
+
+    total_training_steps = num_training_steps_per_epoch * args.num_epochs
+    
+    num_warmup_steps = getattr(args, 'warmup_steps', 0)
+    if isinstance(num_warmup_steps, float): # if warmup_steps is a ratio
+        num_warmup_steps = int(total_training_steps * num_warmup_steps)
+
+    logger.info(f"Total training steps: {total_training_steps}, Warmup steps: {num_warmup_steps}")
+    
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=total_training_steps
+    )
+    
+    logging_steps = getattr(args, 'logging_steps', 10)
+
+    # 4. Training Loop
+    logger.info(f"Starting training for {args.num_epochs} epochs...")
+    original_model.zero_grad() # Clear gradients before starting
+
+    for epoch in range(args.num_epochs):
+        logger.info(f"--- Epoch {epoch+1}/{args.num_epochs} ---")
+        epoch_total_loss = 0.0
+        
+        for step, batch in enumerate(train_dataloader):
+            if batch is None: # Skip if collate_fn returned None (e.g. empty batch after filtering)
+                continue
+
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+
+            # Forward pass
+            outputs = original_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
+            
+            loss = outputs.loss
+            
+            if gradient_accumulation_steps > 1:
+                loss = loss / gradient_accumulation_steps # Normalize loss
+            
+            # Backward pass
+            loss.backward()
+            
+            # Optimizer step (with gradient accumulation)
+            if (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == len(train_dataloader):
+                torch.nn.utils.clip_grad_norm_(original_model.parameters(), 1.0) # Gradient clipping
+                optimizer.step()
+                scheduler.step() # Update learning rate
+                optimizer.zero_grad() # Clear gradients for the next accumulation
+
+            epoch_total_loss += loss.item() * gradient_accumulation_steps # De-normalize for logging
+
+            
+
+            start_time = time.time()
+
+            if (step + 1) % (logging_steps * gradient_accumulation_steps) == 0:
+                current_lr = scheduler.get_last_lr()[0]
+                elapsed = time.time() - start_time
+                step_time = elapsed * 1000 / logging_steps  # in ms
+                tokens_per_second = int(input_ids.numel() * logging_steps / elapsed)
+
+                grad_norm = 0.0
+                for p in original_model.parameters():
+                    if p.requires_grad and p.grad is not None:
+                        grad_norm += p.grad.data.norm(2).item() ** 2
+                grad_norm = grad_norm ** 0.5
+
+                print(
+                    f"step {step+1}/{len(train_dataloader)} | "
+                    f"loss {loss.item() * gradient_accumulation_steps:.6f} (+nanz)| "
+                    f"norm {grad_norm:.4f} (+nanz)| "
+                    f"lr {current_lr:.2e} | "
+                    f"{step_time:.2f} ms | "
+                    f"{tokens_per_second} tok/s",
+                    flush=True
+                )
+
+                start_time = time.time()
+
+
+        avg_epoch_loss = epoch_total_loss / len(train_dataloader)
+        logger.info(f"--- End of Epoch {epoch+1}, Average Loss: {avg_epoch_loss:.4f} ---")
+
+    
+
+    return original_model
+
+
+def train_model_adapted_mistral(original_model, tokenizer, train_dataset_hf, args):
+    """
+    Trains a Mistral model using the provided dataset and arguments.
+
+    Args:
+        original_model: The pre-trained Mistral model (e.g., from AutoModelForCausalLM.from_pretrained).
+        tokenizer: The tokenizer for the model (e.g., from AutoTokenizer.from_pretrained).
+        train_dataset_hf (datasets.Dataset): The Hugging Face training dataset.
+                                            Must contain a 'history' column, where each item is a list of turns,
+                                            and each turn is a dict {'user': str, 'bot': str}.
+        args: An object or Namespace containing training arguments:
+              - num_epochs (int): Number of training epochs.
+              - model_save_path (str): Path to save the fine-tuned model and tokenizer.
+              - learning_rate (float): Optimizer learning rate (e.g., 2e-5, 5e-5).
+              - batch_size (int): Training batch size (e.g., 1, 2, 4, adjust based on GPU memory).
+              - max_seq_length (int): Maximum sequence length for tokenization and padding (e.g., 512, 1024, 2048).
+              - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients before an optimizer update. Defaults to 1.
+              - warmup_steps (int, optional): Number of warmup steps for the learning rate scheduler. Defaults to 0.
+              - logging_steps (int, optional): Log training loss every X steps. Defaults to 10.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
+    
+    original_model.to(device)
+    original_model.train() # Set model to training mode
+
+    # Ensure tokenizer has a pad token. This is crucial for batching.
+    if tokenizer.pad_token is None:
+        logger.warning("Tokenizer does not have a pad_token. Setting pad_token to eos_token.")
+        tokenizer.pad_token = tokenizer.eos_token
+        # Important: If you add a new token or change pad_token such that vocab size changes,
+        # you might need to resize model token embeddings:
+        # original_model.resize_token_embeddings(len(tokenizer))
+        # However, just setting pad_token = eos_token usually means using an existing token.
+    if tokenizer.pad_token_id is None: # Ensure pad_token_id is also set
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    logger.info(f"Tokenizer pad token ID: {tokenizer.pad_token_id}")
+
+
+    # 1. Preprocess and tokenize the dataset
+    logger.info("Preprocessing and tokenizing dataset...")
+    tokenized_data_dict = format_and_tokenize_dataset(train_dataset_hf, tokenizer, args.max_seq_length)
+    
+    if not tokenized_data_dict['input_ids']:
+        logger.error("Tokenization resulted in an empty dataset. Please check your data and formatting.")
+        return None
+
+    # Create a PyTorch Dataset
+    pytorch_train_dataset = ConversationDataset(tokenized_data_dict)
+    logger.info(f"Created PyTorch Dataset with {len(pytorch_train_dataset)} examples.")
+
+
+    # 2. Create DataLoader
+    logger.info(f"Creating DataLoader with batch size: {args.batch_size}...")
+    train_dataloader = DataLoader(
+        pytorch_train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=lambda batch: collate_fn_conversations(batch, tokenizer)
+    )
+
+    # 3. Set up Optimizer and Scheduler
+    logger.info(f"Setting up optimizer with learning rate: {args.learning_rate}...")
+
+    print("trainable layers: ")
+    # Print layers which require gradients (i.e., will be updated during training)
+    for name, param in original_model.named_parameters():
+        if param.requires_grad:
+            print(name)
+
+
+    
+    # Only pass trainable parameters to the optimizer
+    optimizer = AdamW(filter(lambda p: p.requires_grad, original_model.parameters()), lr=args.learning_rate, eps=1e-8) # Added eps for stability
+
+    gradient_accumulation_steps = getattr(args, 'gradient_accumulation_steps', 1)
+    num_training_steps_per_epoch = len(train_dataloader) // gradient_accumulation_steps
+    if len(train_dataloader) % gradient_accumulation_steps != 0:
+        num_training_steps_per_epoch +=1 # account for the last partial step
+
+    total_training_steps = num_training_steps_per_epoch * args.num_epochs
+    
+    num_warmup_steps = getattr(args, 'warmup_steps', 0)
+    if isinstance(num_warmup_steps, float): # if warmup_steps is a ratio
+        num_warmup_steps = int(total_training_steps * num_warmup_steps)
+
+    logger.info(f"Total training steps: {total_training_steps}, Warmup steps: {num_warmup_steps}")
+    
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=total_training_steps
+    )
+    
+    logging_steps = getattr(args, 'logging_steps', 10)
+
+    # 4. Training Loop
+    logger.info(f"Starting training for {args.num_epochs} epochs...")
+    original_model.zero_grad() # Clear gradients before starting
+
+    for epoch in range(args.num_epochs):
+        logger.info(f"--- Epoch {epoch+1}/{args.num_epochs} ---")
+        epoch_total_loss = 0.0
+        
+        for step, batch in enumerate(train_dataloader):
+            if batch is None: # Skip if collate_fn returned None (e.g. empty batch after filtering)
+                continue
+
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+
+            # Forward pass
+            outputs = original_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
+            
+            loss = outputs.loss
+            
+            if gradient_accumulation_steps > 1:
+                loss = loss / gradient_accumulation_steps # Normalize loss
+            
+            # Backward pass
+            loss.backward()
+            
+            # Optimizer step (with gradient accumulation)
+            if (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == len(train_dataloader):
+                torch.nn.utils.clip_grad_norm_(original_model.parameters(), 1.0) # Gradient clipping
+                optimizer.step()
+                scheduler.step() # Update learning rate
+                optimizer.zero_grad() # Clear gradients for the next accumulation
+
+            epoch_total_loss += loss.item() * gradient_accumulation_steps # De-normalize for logging
+
+            
+
+            start_time = time.time()
+
+            if (step + 1) % (logging_steps * gradient_accumulation_steps) == 0:
+                current_lr = scheduler.get_last_lr()[0]
+                elapsed = time.time() - start_time
+                step_time = elapsed * 1000 / logging_steps  # in ms
+                tokens_per_second = int(input_ids.numel() * logging_steps / elapsed)
+
+                grad_norm = 0.0
+                for p in original_model.parameters():
+                    if p.requires_grad and p.grad is not None:
+                        grad_norm += p.grad.data.norm(2).item() ** 2
+                grad_norm = grad_norm ** 0.5
+
+                print(
+                    f"step {step+1}/{len(train_dataloader)} | "
+                    f"loss {loss.item() * gradient_accumulation_steps:.6f} (+nanz)| "
+                    f"norm {grad_norm:.4f} (+nanz)| "
+                    f"lr {current_lr:.2e} | "
+                    f"{step_time:.2f} ms | "
+                    f"{tokens_per_second} tok/s",
+                    flush=True
+                )
+
+                start_time = time.time()
+
+
+        avg_epoch_loss = epoch_total_loss / len(train_dataloader)
+        logger.info(f"--- End of Epoch {epoch+1}, Average Loss: {avg_epoch_loss:.4f} ---")
+
+    
+
+    return original_model

@@ -18,7 +18,8 @@ from evaluator.generic_evaluator import GenericLLMEvaluator
 
 # Import for Adapter
 from adapter.mistral_adapter import DCTAdapter # Assuming DCTAdapter is in adapter/my_adapter.py
-from runner.train import train_model, freeze_model_except_adapters, train_model_mistral
+from runner.train import train_model, freeze_model_except_adapters
+
 
 try:
     from mmengine.config import ConfigDict
@@ -333,6 +334,16 @@ def run_evaluation_pipeline(
 # --- Main Script Logic ---
 
 def main():
+
+    # Load the layers to train
+    import yaml
+    config_file_path = "config/config.yaml"
+
+    with open(config_file_path, 'r') as f:
+        config_data = yaml.safe_load(f)
+
+    
+
     parser = argparse.ArgumentParser(description="Evaluate original and adapted Mistral models.")
     parser.add_argument("--model_name_or_path", type=str, default="mistralai/Mistral-7B-Instruct-v0.2", help="Path to the base Mistral model.")
     parser.add_argument("--train_dataset_path", type=str, default="evaluator/benchmark_datasets/new_datasamples.jsonl", help="Path to the training dataset (JSONL format).")
@@ -416,12 +427,49 @@ def main():
         logger.error(f"Failed to load tokenizer for {args.model_name_or_path}: {e}", exc_info=True)
         return
         
+    
+
+    args.model_name_or_path = "mistralai/Mistral-7B-Instruct-v0.2"
+    args.train_dataset_path = "evaluator/benchmark_datasets/new_datasamples.jsonl"
+    args.eval_dataset_path = "evaluator/benchmark_datasets/mtbench101_original.jsonl"
+    args.num_train_samples = -1 # -1 for all the samples
+    args.num_eval_samples = -1
+    args.max_new_tokens = 512
+    args.eval_output_dir = "./eval_results_injection"
+    args.openai_config_path = "evaluator/openai_config.yaml"
+    args.evaluator_type = "GenericLLMEvaluator"
+    args.judge_model_name = "gpt-4"
+    args.judge_system_prompt = None
+    args.batch_size = 5
+    args.num_epochs = 10 # TODO: Change this later
+
+    # Arguments for Adapter Injection
+    args.do_adapter_injection = True
+    args.adapter_layers_json = """[{"name": "model.layers.15.mlp.gate_proj"}, {"name": "model.layers.15.mlp.up_proj"}]"""
+    args.adapter_params_json = '{"in_features": 4096, "reduction_factor": 16}'
+    args.perform_adapter_training = True
+    args.adapter_lr = 1e-4
+    args.learning_rate = 1e-4
+    args.adapter_epochs = 1
+
+    # New argument for full fine-tuning
+    args.perform_full_finetune = True
+    args.model_save_path = "output/"
+
+    args.adapter_layers_json = config_data.get('adapter', {}).get('layers')
+
+    print(f"Loaded adapter layers from {config_file_path}:")
+    print(args.adapter_layers_json)
+    args.max_seq_length = 1024
+
+    from runner.train import train_model_mistral , train_model_adapted_mistral
     # --- Full Fine-tuning of Original Model ---
     if args.perform_full_finetune:
         logger.info("Performing full fine-tuning of the original model...")
         original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
         # Use your existing train_model function for full fine-tuning
-        original_model = train_model_mistral(original_model, tokenizer, train_dataset, args)
+        train_dataset_hf = train_dataset
+        original_model = train_model_mistral(original_model, tokenizer, train_dataset_hf, args)
         # Save the fine-tuned original model
         finetuned_original_dir = os.path.join(args.eval_output_dir, "finetuned_original_model")
         os.makedirs(finetuned_original_dir, exist_ok=True)
@@ -477,7 +525,8 @@ def main():
                     logger.info(f"Performing adapter training using {len(train_dataset)} samples...")
                     device = "cuda" if torch.cuda.is_available() else "cpu"
                     adapted_model.to(device)
-                    adapted_model = train_model_with_adapter(adapted_model, tokenizer, train_dataset, args)
+                    train_dataset_hf = train_dataset
+                    adapted_model = train_model_adapted_mistral(adapted_model, tokenizer, train_dataset_hf, args)
                     logger.info("Adapter training finished.")
                     # Save the adapter-injected model (adapter weights)
                     finetuned_adapter_dir = os.path.join(args.eval_output_dir, "finetuned_adapter_model")
