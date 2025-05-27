@@ -364,6 +364,14 @@ def train_model_mistral(original_model, tokenizer, train_dataset_hf, args):
         if param.requires_grad:
             print(name)
 
+    # Count total and trainable parameters
+    total_params = sum(p.numel() for p in original_model.parameters())
+    trainable_params = sum(p.numel() for p in original_model.parameters() if p.requires_grad)
+
+    print(f"\nTrainable parameters: {trainable_params:,}")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Percentage trainable: {100 * trainable_params / total_params:.2f}%")
+
 
     # Only pass trainable parameters to the optimizer
     optimizer = AdamW(filter(lambda p: p.requires_grad, original_model.parameters()), lr=args.learning_rate, eps=1e-8) # Added eps for stability
@@ -537,8 +545,14 @@ def train_model_adapted_mistral(original_model, tokenizer, train_dataset_hf, arg
         if param.requires_grad:
             print(name)
 
+    # Count total and trainable parameters
+    total_params = sum(p.numel() for p in original_model.parameters())
+    trainable_params = sum(p.numel() for p in original_model.parameters() if p.requires_grad)
 
-    
+    print(f"\nTrainable parameters: {trainable_params:,}")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Percentage trainable: {100 * trainable_params / total_params:.2f}%")
+
     # Only pass trainable parameters to the optimizer
     optimizer = AdamW(filter(lambda p: p.requires_grad, original_model.parameters()), lr=args.learning_rate, eps=1e-8) # Added eps for stability
 

@@ -81,7 +81,7 @@ def inject_adapters(
 
                         adapter_instance = adapter_cls(**current_adapter_args)
                         setattr(parent, name.split('.')[-1], torch.nn.Sequential(original_module, adapter_instance))
-                        logger.info(f"Successfully injected adapter after {name} with args: {current_adapter_args}")
+                        print(f"Successfully injected adapter after {name} with args: {current_adapter_args}")
                     except Exception as e:
                         logger.error(f"Failed to inject adapter into {name}: {e}", exc_info=True)
     return model
@@ -463,34 +463,34 @@ def main():
     args.max_seq_length = 1024
 
     from runner.train import train_model_mistral , train_model_adapted_mistral
-    # --- Full Fine-tuning of Original Model ---
-    if args.perform_full_finetune:
-        logger.info("Performing full fine-tuning of the original model...")
-        original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
-        # Use your existing train_model function for full fine-tuning
-        train_dataset_hf = train_dataset
-        original_model = train_model_mistral(original_model, tokenizer, train_dataset_hf, args)
-        # Save the fine-tuned original model
-        finetuned_original_dir = os.path.join(args.eval_output_dir, "finetuned_original_model")
-        os.makedirs(finetuned_original_dir, exist_ok=True)
-        original_model.save_pretrained(finetuned_original_dir)
-        tokenizer.save_pretrained(finetuned_original_dir)
-        logger.info(f"Full fine-tuning finished. Model saved to {finetuned_original_dir}")
-    else:
-        original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+    # # --- Full Fine-tuning of Original Model ---
+    # if args.perform_full_finetune:
+    #     logger.info("Performing full fine-tuning of the original model...")
+    #     original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
+    #     # Use your existing train_model function for full fine-tuning
+    #     train_dataset_hf = train_dataset
+    #     original_model = train_model_mistral(original_model, tokenizer, train_dataset_hf, args)
+    #     # Save the fine-tuned original model
+    #     finetuned_original_dir = os.path.join(args.eval_output_dir, "finetuned_original_model")
+    #     os.makedirs(finetuned_original_dir, exist_ok=True)
+    #     original_model.save_pretrained(finetuned_original_dir)
+    #     tokenizer.save_pretrained(finetuned_original_dir)
+    #     logger.info(f"Full fine-tuning finished. Model saved to {finetuned_original_dir}")
+    # else:
+    #     original_model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path)
 
-    # --- Evaluate Fine-tuned Original Model ---
-    run_evaluation_pipeline(
-        model_name_or_path=args.model_name_or_path,
-        model_to_evaluate=original_model,
-        tokenizer=tokenizer,
-        eval_dataset=eval_dataset,
-        args=args,
-        output_suffix="original"
-    )
-    del original_model
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # # --- Evaluate Fine-tuned Original Model ---
+    # run_evaluation_pipeline(
+    #     model_name_or_path=args.model_name_or_path,
+    #     model_to_evaluate=original_model,
+    #     tokenizer=tokenizer,
+    #     eval_dataset=eval_dataset,
+    #     args=args,
+    #     output_suffix="original"
+    # )
+    # del original_model
+    # if torch.cuda.is_available():
+    #     torch.cuda.empty_cache()
 
     # --- Adapter Injection and Evaluation for Adapted Model ---
     logger.info(f"--- Starting Evaluation for Adapted Model: {args.model_name_or_path} + Adapter ---")
@@ -509,15 +509,18 @@ def main():
                 logger.info(f"Model architecture written to {model_arch_path}")
             except Exception as e:
                 logger.error(f"Failed to write model architecture: {e}")
-            print("Hello")
+            
             try: 
                 adapted_model = inject_adapters(adapted_model, DCTAdapter, config['adapter']['params'], config['adapter']['layers'])
                 logger.info("Adapter injection process finished.")
                 freeze_model_except_adapters(adapted_model)
                 print("ADAPTER MODEL ARCHITECTURE")
                 print(adapted_model)
+
+
             except Exception as e:
                 print(e)
+            args.perform_adapter_training = True
             if args.perform_adapter_training:
                 if train_dataset is None or len(train_dataset) == 0:
                     logger.warning("Adapter training requested, but train_dataset is empty or None. Skipping training.")

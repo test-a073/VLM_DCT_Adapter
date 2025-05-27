@@ -7,7 +7,7 @@ adapter:
   name: MyCustomAdapter
   params:
     # input_dim: 768 # this for florence base
-    input_dim: 4096 
+    in_features: 4096 
     num_components: 512
   
   layers: 
