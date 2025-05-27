@@ -4,3 +4,5 @@ datasets>=2.14.0
 tqdm
 PyYAML
 accelerate
+openai
+Levenshtein
